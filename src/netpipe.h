@@ -5,8 +5,8 @@
 
 /* SCSI ID 6 (DTYPE_REMOTECOMM) の中で netpipe が使う LBA */
 #define NETPIPE_WLBA    0x100000        /* 要求を書く (8 セクタまで) */
-#define NETPIPE_RLBA    0x180000        /* 応答を読む (0x180000～0x1fffff のどこでも、8 セクタ周期) */
-#define NETPIPE_REND    0x200000
+#define NETPIPE_RLBA    0x400000        /* 応答を読む (0x400000～0x7ffff7 のどこでも、8 セクタ周期)。 */
+#define NETPIPE_REND    0x7ffff8        /* 読む位置は毎回変える: Z 側が読み込みをキャッシュする (帯は 2GB = Z のメモリより広く) */
 
 int netpipe_write(uint32_t lba, const uint8_t *buf);
 int netpipe_read(uint32_t lba, uint8_t *buf);
