@@ -32,6 +32,7 @@ add_executable(
 	src/hdscache.c
 	src/smb2connect.c
         src/config_file.c
+        src/netpipe.c
         src/usb_descriptors.c
         x68kserremote/service/remoteserv.c
         iconv/iconv_mini.c

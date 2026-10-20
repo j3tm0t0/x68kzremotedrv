@@ -40,6 +40,7 @@
 #include "config_file.h"
 #include "remoteserv.h"
 #include "fileop.h"
+#include "netpipe.h"
 
 #include "scsiremote.inc"
 #include "bootloader.inc"
@@ -494,6 +495,9 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
             }
         }
         if (diskinfo[id].type == DTYPE_REMOTECOMM) {
+            if (lba >= NETPIPE_RLBA && lba < NETPIPE_REND) {
+                return netpipe_read(lba, buf);
+            }
             if (lba >= (0x20000 / 512) && lba < (0x40000 / 512)) {
                 // settingui.bin
                 lba -= 0x20000 / 512;
@@ -567,6 +571,9 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
             return 0;
         }
         if (diskinfo[id].type == DTYPE_REMOTECOMM) {
+            if (lba >= NETPIPE_WLBA && lba < NETPIPE_RLBA) {
+                return netpipe_write(lba, buf);
+            }
             struct vdbuf *b = (struct vdbuf *)buf;
             if (b->header.signature != 0x5a383658) {   /* "X68Z" (big endian) */
                 return -1;

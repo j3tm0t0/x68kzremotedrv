@@ -83,6 +83,11 @@ static void connection(int mode)
 
         sysstatus = STAT_WIFI_CONNECTED;
 
+        /* 省電力 (既定) だと応答が 50～300ms 遅れ、netpipe の TCP が遅くなる */
+        cyw43_arch_lwip_begin();
+        cyw43_wifi_pm(&cyw43_state, cyw43_pm_value(CYW43_NO_POWERSAVE_MODE, 20, 1, 1, 1));
+        cyw43_arch_lwip_end();
+
         ip4_addr_t *address = &(cyw43_state.netif[0].ip_addr);
         printf("Connected to %s as %d.%d.%d.%d as host %s\n",
                config.wifi_ssid,
