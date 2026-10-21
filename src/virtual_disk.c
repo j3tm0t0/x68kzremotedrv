@@ -229,8 +229,8 @@ int vd_init(void)
 
     /* SCSI ID 6 : for remote communication */
     diskinfo[6].type = DTYPE_REMOTECOMM;
-    /* 2GB より大きくすると Z がディスク構成を受け付けず、起動できなくなる (0xfffffe00 で確認)。
-       netpipe の帯は netpipe.h */
+    /* netpipe の帯は netpipe.h (0x200000 セクタ未満)。0xfffffe00 にした版では Z が起動しなかったが、
+       電源投入時に Pico の接続が間に合わなかっただけかもしれない (未確認) */
     diskinfo[6].size = 0x80000000;
 
     for (int i = 0; i < 7; i++) {
