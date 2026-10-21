@@ -92,10 +92,10 @@ static bool ring_room(uint32_t n)
     return n <= RXRING - (rx_head - rx_tail);
 }
 
-/* SLIP にしてリングに積む (入りきらないときは丸ごと捨てる) */
-static void ring_put_slip(const struct pbuf *p, uint16_t offset)
+/* offset から len バイトを SLIP にしてリングに積む (入りきらないときは丸ごと捨てる) */
+static void ring_put_slip(const struct pbuf *p, uint16_t offset, uint16_t len)
 {
-    if (!ring_room(2 * (p->tot_len - offset) + 2)) {
+    if (!ring_room(2 * len + 2)) {
         st_drop++;
         return;
     }
@@ -111,7 +111,7 @@ static void ring_put_slip(const struct pbuf *p, uint16_t offset)
         }
         i = skip;
         skip = 0;
-        for (; i < q->len; i++) {
+        for (; i < q->len && len > 0; i++, len--) {
             uint8_t c = s[i];
             if (c == SLIP_END) {
                 rxring[h++ % RXRING] = SLIP_ESC;
@@ -206,10 +206,14 @@ static err_t np_input(struct pbuf *p, struct netif *netif)
                 const uint8_t *ip = (const uint8_t *)ih;
                 int hl = (ip[0] & 15) * 4;
                 /* 外からの ping は捨てる: ESP/X は TCP を閉じたあとに echo request を受けると止まった */
+                /* Ethernet の詰め物を Z に渡さないよう、IP の全長で切る */
+                int tot = lwip_ntohs(IPH_LEN(ih));
                 if (IPH_PROTO(ih) == IP_PROTO_ICMP && p->len >= SIZEOF_ETH_HDR + hl + 1 && ip[hl] == 8)
                     st_drop++;
+                else if (tot < 20 || tot > p->tot_len - SIZEOF_ETH_HDR)
+                    st_drop++;
                 else
-                    ring_put_slip(p, SIZEOF_ETH_HDR);
+                    ring_put_slip(p, SIZEOF_ETH_HDR, tot);
                 pbuf_free(p);
                 return ERR_OK;
             }
