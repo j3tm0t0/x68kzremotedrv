@@ -86,6 +86,11 @@ static volatile bool arp_pending;       /* Z 宛ての ARP 要求に答える (U
 static struct eth_addr arp_mac;
 static ip4_addr_t arp_ip;
 static bool announced;                  /* Z の IP アドレスを名乗った (gratuitous ARP) */
+/* Z 宛ての ping (ICMP echo request) は Z に渡さず、Pico が代わりに返す (代返)。ESP/X は TCP を閉じたあとに
+   外から echo request を受けると止まった。返すのは Z が次に交換しに来たとき (USB タスク) なので、
+   Z が固まっていれば返事は出ない (ping で Z が生きているかは分かる) */
+static uint8_t echo_pkt[MTU];
+static volatile uint16_t echo_len;      /* 0 でなければ返す echo request が入っている */
 
 extern volatile int sysstatus;
 
@@ -243,11 +248,18 @@ static err_t np_input(struct pbuf *p, struct netif *netif)
             if (dst == z) {
                 const uint8_t *ip = (const uint8_t *)ih;
                 int hl = (ip[0] & 15) * 4;
-                /* 外からの ping は捨てる: ESP/X は TCP を閉じたあとに echo request を受けると止まった */
+                /* 外からの ping は Z に渡さず、Pico が代わりに返す (echo_pkt を参照) */
                 /* Ethernet の詰め物を Z に渡さないよう、IP の全長で切る */
                 int tot = lwip_ntohs(IPH_LEN(ih));
-                if (IPH_PROTO(ih) == IP_PROTO_ICMP && p->len >= SIZEOF_ETH_HDR + hl + 1 && ip[hl] == 8)
-                    st_drop++;
+                if (IPH_PROTO(ih) == IP_PROTO_ICMP && p->len >= SIZEOF_ETH_HDR + hl + 1 && ip[hl] == 8) {
+                    if (echo_len == 0 && tot <= MTU && tot <= p->tot_len - SIZEOF_ETH_HDR &&
+                        pbuf_copy_partial(p, echo_pkt, tot, SIZEOF_ETH_HDR) == tot) {
+                        __dmb();
+                        echo_len = tot;
+                    } else {
+                        st_drop++;
+                    }
+                }
                 else if (tot < 20 || tot > p->tot_len - SIZEOF_ETH_HDR)
                     st_drop++;
                 else if (raw)
@@ -302,6 +314,49 @@ static void bridge_send(const uint8_t *pkt, int tot)
     } else {
         st_drop++;
     }
+}
+
+/* 16 ビットの 1 の補数の和 (IP / ICMP のチェックサム) */
+static uint16_t cksum(const uint8_t *b, int n)
+{
+    uint32_t s = 0;
+    for (int i = 0; i + 1 < n; i += 2)
+        s += (b[i] << 8) | b[i + 1];
+    if (n & 1)
+        s += b[n - 1] << 8;
+    while (s >> 16)
+        s = (s & 0xffff) + (s >> 16);
+    return ~s & 0xffff;
+}
+
+/* 預かった echo request に、Z の代わりに echo reply を返す (USB タスクで、lwIP のロックの外から呼ぶ) */
+static void echo_reply(void)
+{
+    int tot = echo_len;
+    if (tot == 0)
+        return;
+    uint8_t *ip = echo_pkt;
+    int hl = (ip[0] & 15) * 4;
+    if (hl >= 20 && tot >= hl + 8) {
+        uint8_t t[4];
+        memcpy(t, &ip[12], 4);           /* 送り元と宛先を入れ替える */
+        memcpy(&ip[12], &ip[16], 4);
+        memcpy(&ip[16], t, 4);
+        ip[8] = 64;                      /* TTL */
+        ip[10] = ip[11] = 0;
+        uint16_t c = cksum(ip, hl);
+        ip[10] = c >> 8;
+        ip[11] = c;
+        uint8_t *icmp = ip + hl;
+        icmp[0] = 0;                     /* echo reply */
+        icmp[2] = icmp[3] = 0;
+        c = cksum(icmp, tot - hl);
+        icmp[2] = c >> 8;
+        icmp[3] = c;
+        bridge_send(ip, tot);
+    }
+    __dmb();
+    echo_len = 0;
 }
 
 /* Z から来たレコード ([長さ 2][IP パケット][詰め物]) を 1 個ずつ Wi-Fi に出す */
@@ -417,6 +472,7 @@ static void np_exchange(void)
                 send_arp(ARP_REPLY, &m, &ip);
             }
             cyw43_arch_lwip_end();
+            echo_reply();
             if (txlen > 0 && raw)
                 bridge_out_rec(reqbuf + 16, txlen);
             else if (txlen > 0)
