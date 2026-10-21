@@ -5,6 +5,10 @@
  *   1. NETPIPE_WLBA に要求 (見出し 16 バイト + 送信データ) を書き、
  *   2. NETPIPE_RLBA 帯のどこか (読むたびに 8 ずつ下げる) から応答 (見出し 16 バイト + 受信データ) を読む。
  * 送信データも受信データも SLIP (RFC 1055) のバイト列。運び方は 2 通りあり、要求の見出しで Z が選ぶ。
+ * ブリッジでは、要求のマジックを "X6NR" にすると SLIP をやめ、IP パケットを長さ付きのレコードで運ぶ
+ * (Z の 68000 では SLIP の解読と 1 バイトずつの取り出しが CPU の 2 割を超えていた):
+ *   Z へ:   [長さ 2][空き 14][IP パケット][偶数にそろえる詰め物]  (空きは slip.sys が Ethernet の見出しを書く場所)
+ *   Z から: [長さ 2][IP パケット][偶数にそろえる詰め物]
  *
  *   ブリッジ (要求の +12 に Z の IP アドレスがあるとき):
  *     Pico が Z の IP アドレスを代わりに名乗る (Z 宛ての ARP 要求に Pico の MAC で答える)。
@@ -38,6 +42,8 @@
 
 #define NETPIPE_PORT    6868
 #define NETPIPE_MAGIC   0x58364e50      /* "X6NP" (big endian) */
+#define NETPIPE_MAGIC_R 0x58364e52      /* "X6NR": レコードで運ぶ (ブリッジだけ) */
+#define REC_HDR         16              /* Z へのレコードの見出し (長さ 2 + 空き 14) */
 #define NETPIPE_SECTS   8
 #define NETPIPE_DATAMAX (NETPIPE_SECTS * 512 - 16)
 #define UDP_CHUNK       1400            /* IP の断片化を避ける */
@@ -73,6 +79,7 @@ static uint32_t last_tx;
 
 /* ブリッジ */
 static volatile uint32_t zip;           /* Z の IP アドレス (ネットワークバイトオーダー)。0 ならブリッジしない */
+static volatile bool raw;               /* レコードで運ぶ ("X6NR") */
 static struct netif *wifi;
 static netif_input_fn wifi_input;       /* 横取りする前の netif->input */
 static volatile bool arp_pending;       /* Z 宛ての ARP 要求に答える (USB タスクで送る) */
@@ -125,6 +132,37 @@ static void ring_put_slip(const struct pbuf *p, uint16_t offset, uint16_t len)
         }
     }
     rxring[h++ % RXRING] = SLIP_END;
+    __dmb();
+    rx_head = h;
+    st_tozf++;
+}
+
+/* offset から len バイトを Z へのレコードにしてリングに積む (入りきらないときは捨てる) */
+static void ring_put_rec(const struct pbuf *p, uint16_t offset, uint16_t len)
+{
+    uint32_t rl = REC_HDR + ((len + 1) & ~1);
+    if (!ring_room(rl)) {
+        st_drop++;
+        return;
+    }
+    uint32_t h = rx_head;
+    rxring[h++ % RXRING] = len >> 8;
+    rxring[h++ % RXRING] = len;
+    for (int i = 2; i < REC_HDR; i++)
+        rxring[h++ % RXRING] = 0;
+    uint16_t skip = offset, left = len;
+    for (const struct pbuf *q = p; q != NULL && left > 0; q = q->next) {
+        const uint8_t *s = q->payload;
+        uint16_t i;
+        if (skip >= q->len) {
+            skip -= q->len;
+            continue;
+        }
+        for (i = skip, skip = 0; i < q->len && left > 0; i++, left--)
+            rxring[h++ % RXRING] = s[i];
+    }
+    if (len & 1)
+        rxring[h++ % RXRING] = 0;
     __dmb();
     rx_head = h;
     st_tozf++;
@@ -212,6 +250,8 @@ static err_t np_input(struct pbuf *p, struct netif *netif)
                     st_drop++;
                 else if (tot < 20 || tot > p->tot_len - SIZEOF_ETH_HDR)
                     st_drop++;
+                else if (raw)
+                    ring_put_rec(p, SIZEOF_ETH_HDR, tot);
                 else
                     ring_put_slip(p, SIZEOF_ETH_HDR, tot);
                 pbuf_free(p);
@@ -247,6 +287,41 @@ static void send_arp(uint16_t op, const struct eth_addr *dmac, const ip4_addr_t 
     pbuf_free(p);
 }
 
+/* IP パケット 1 個を Wi-Fi に出す */
+static void bridge_send(const uint8_t *pkt, int tot)
+{
+    struct pbuf *p = pbuf_alloc(PBUF_IP, tot, PBUF_POOL);
+    if (p != NULL) {
+        ip4_addr_t dst;
+        pbuf_take(p, pkt, tot);
+        memcpy(&dst, &pkt[16], 4);
+        cyw43_arch_lwip_begin();
+        etharp_output(wifi, p, &dst);   /* LAN の外ならゲートウェイの MAC で出す */
+        cyw43_arch_lwip_end();
+        pbuf_free(p);
+    } else {
+        st_drop++;
+    }
+}
+
+/* Z から来たレコード ([長さ 2][IP パケット][詰め物]) を 1 個ずつ Wi-Fi に出す */
+static void bridge_out_rec(const uint8_t *s, int n)
+{
+    while (n >= 2) {
+        int len = (s[0] << 8) | s[1];
+        int rl = 2 + ((len + 1) & ~1);
+        if (len == 0 || rl > n)
+            break;
+        const uint8_t *pkt = s + 2;
+        /* xip.x の詰め物 (Ethernet の最小長) があるので、全長 <= 長さ のものを全長の分だけ出す */
+        int tot = len >= 20 ? (pkt[2] << 8) | pkt[3] : 0;
+        if ((pkt[0] >> 4) == 4 && tot >= 20 && tot <= len)
+            bridge_send(pkt, tot);
+        s += rl;
+        n -= rl;
+    }
+}
+
 /* Z から来た SLIP をほどき、1 パケットそろうたびに Wi-Fi に出す */
 static void bridge_out(const uint8_t *s, int n)
 {
@@ -258,20 +333,8 @@ static void bridge_out(const uint8_t *s, int n)
             /* IPv4 で、全長 <= 受け取った長さ のものを全長の分だけ出す。xip.x は Ethernet の最小長 (60 バイト) まで
                詰め物を足し、slip.sys はそれごと送ってくるので、小さいパケット (SYN-ACK など) は全長より長い */
             int tot = pos >= 20 ? (pkt[2] << 8) | pkt[3] : 0;
-            if (pos >= 20 && !bad && (pkt[0] >> 4) == 4 && tot >= 20 && tot <= pos) {
-                struct pbuf *p = pbuf_alloc(PBUF_IP, tot, PBUF_POOL);
-                if (p != NULL) {
-                    ip4_addr_t dst;
-                    pbuf_take(p, pkt, tot);
-                    memcpy(&dst, &pkt[16], 4);
-                    cyw43_arch_lwip_begin();
-                    etharp_output(wifi, p, &dst);   /* LAN の外ならゲートウェイの MAC で出す */
-                    cyw43_arch_lwip_end();
-                    pbuf_free(p);
-                } else {
-                    st_drop++;
-                }
-            }
+            if (pos >= 20 && !bad && (pkt[0] >> 4) == 4 && tot >= 20 && tot <= pos)
+                bridge_send(pkt, tot);
             pos = esc = bad = 0;
             continue;
         }
@@ -327,15 +390,18 @@ static void np_exchange(void)
     int txlen = be16(rq->len);
     int rxmax = be16(rq->rxmax);
     uint32_t z = rq->stat;              /* ネットワークバイトオーダーのまま (X68000 もビッグエンディアン) */
+    bool r = z != 0 && rq->magic == be32(NETPIPE_MAGIC_R);
     int n = 0;
 
     if (np_open()) {
-        if (z != zip) {
+        if (z != zip || r != raw) {
             zip = z;
+            raw = r;
             announced = false;
             rx_tail = rx_head;          /* 運び方が変わったら残りは捨てる */
             if (z != 0)
-                printf("netpipe: bridge %d.%d.%d.%d\n", z & 255, (z >> 8) & 255, (z >> 16) & 255, z >> 24);
+                printf("netpipe: bridge %d.%d.%d.%d%s\n", z & 255, (z >> 8) & 255, (z >> 16) & 255, z >> 24,
+                       r ? " (records)" : "");
         }
         if (z != 0) {
             cyw43_arch_lwip_begin();
@@ -351,7 +417,9 @@ static void np_exchange(void)
                 send_arp(ARP_REPLY, &m, &ip);
             }
             cyw43_arch_lwip_end();
-            if (txlen > 0)
+            if (txlen > 0 && raw)
+                bridge_out_rec(reqbuf + 16, txlen);
+            else if (txlen > 0)
                 bridge_out(reqbuf + 16, txlen);
         } else if (txlen > 0) {
             np_send(reqbuf + 16, txlen);
@@ -365,9 +433,23 @@ static void np_exchange(void)
         uint32_t t = rx_tail;
         uint32_t avail = rx_head - t;
         __dmb();
-        n = avail < rxmax ? avail : rxmax;
-        for (int i = 0; i < n; i++)
-            resbuf[16 + i] = rxring[t++ % RXRING];
+        if (raw) {
+            /* レコードを途中で切らない */
+            while (avail >= REC_HDR) {
+                int len = (rxring[t % RXRING] << 8) | rxring[(t + 1) % RXRING];
+                uint32_t rl = REC_HDR + ((len + 1) & ~1);
+                if (rl > avail || n + rl > (uint32_t)rxmax)
+                    break;
+                for (uint32_t i = 0; i < rl; i++)
+                    resbuf[16 + n + i] = rxring[t++ % RXRING];
+                n += rl;
+                avail -= rl;
+            }
+        } else {
+            n = avail < rxmax ? avail : rxmax;
+            for (int i = 0; i < n; i++)
+                resbuf[16 + i] = rxring[t++ % RXRING];
+        }
         rx_tail = t;
     }
     rs->magic = rq->magic;
@@ -385,7 +467,7 @@ int netpipe_write(uint32_t lba, const uint8_t *buf)
         return -1;
     if (page == 0) {
         const struct np_header *rq = (const struct np_header *)buf;
-        if (rq->magic != be32(NETPIPE_MAGIC) || be16(rq->len) > NETPIPE_DATAMAX)
+        if ((rq->magic != be32(NETPIPE_MAGIC) && rq->magic != be32(NETPIPE_MAGIC_R)) || be16(rq->len) > NETPIPE_DATAMAX)
             return -1;
         nsect = (16 + be16(rq->len) + 511) / 512;
     }

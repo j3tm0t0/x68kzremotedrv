@@ -191,7 +191,16 @@ void connect_task(void *params)
     /* Set up WiFi connection */
 
     xSemaphoreTake(remote_sem, portMAX_DELAY);
-    connection(CONNECT_WIFI);
+    /* 電源を入れた直後は Wi-Fi や SMB2 サーバへの接続が一度で通らないことがある。通らないまま
+       USB 側に知らせると、Z は HDS の無いディスクを読んで「ディスクから起動できません」になり、
+       Z の電源を入れ直すまで直らなかった。何度か繰り直す (Z の USB の読み込みはその間待たせる) */
+    for (int i = 0; i < 5 && sysstatus < STAT_SMB2_CONNECTED; i++) {
+        if (i > 0) {
+            printf("Retry connection (%d)\n", i);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+        connection(sysstatus >= STAT_WIFI_CONNECTED ? CONNECT_SMB2 : CONNECT_WIFI);
+    }
     if (sysstatus >= STAT_SMB2_CONNECTED) {
         vd_mount();
     }
