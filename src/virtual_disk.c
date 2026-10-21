@@ -229,9 +229,10 @@ int vd_init(void)
 
     /* SCSI ID 6 : for remote communication */
     diskinfo[6].type = DTYPE_REMOTECOMM;
-    /* netpipe が 0x400000 セクタ以降 (2GB 分) を応答の読み出しに使う。Z 側の Linux が読み込みを
-       キャッシュするので、Z のメモリより広い帯を回らないと、一巡したところで古い応答が返る */
-    diskinfo[6].size = 0xfffffe00;
+    /* netpipe が 0x110000～0x3ffff7 セクタ (約 1.5GB) を応答の読み出しに使う。Z 側の Linux が読み込みを
+       キャッシュするので、広い帯を回らないと、一巡したところで古い応答が返る。
+       2GB より大きくすると Z がディスク構成を受け付けず、起動できなくなる (0xfffffe00 で確認) */
+    diskinfo[6].size = 0x80000000;
 
     for (int i = 0; i < 7; i++) {
         diskinfo[i].sects = (diskinfo[i].size + SECTOR_SIZE - 1) / SECTOR_SIZE;
