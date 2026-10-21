@@ -251,12 +251,14 @@ static void bridge_out(const uint8_t *s, int n)
     for (int i = 0; i < n; i++) {
         uint8_t c = s[i];
         if (c == SLIP_END) {
-            /* IPv4 で、全長 = 受け取った長さ のものだけ出す */
-            if (pos >= 20 && !bad && (pkt[0] >> 4) == 4 && ((pkt[2] << 8) | pkt[3]) == pos) {
-                struct pbuf *p = pbuf_alloc(PBUF_IP, pos, PBUF_POOL);
+            /* IPv4 で、全長 <= 受け取った長さ のものを全長の分だけ出す。xip.x は Ethernet の最小長 (60 バイト) まで
+               詰め物を足し、slip.sys はそれごと送ってくるので、小さいパケット (SYN-ACK など) は全長より長い */
+            int tot = pos >= 20 ? (pkt[2] << 8) | pkt[3] : 0;
+            if (pos >= 20 && !bad && (pkt[0] >> 4) == 4 && tot >= 20 && tot <= pos) {
+                struct pbuf *p = pbuf_alloc(PBUF_IP, tot, PBUF_POOL);
                 if (p != NULL) {
                     ip4_addr_t dst;
-                    pbuf_take(p, pkt, pos);
+                    pbuf_take(p, pkt, tot);
                     memcpy(&dst, &pkt[16], 4);
                     cyw43_arch_lwip_begin();
                     etharp_output(wifi, p, &dst);   /* LAN の外ならゲートウェイの MAC で出す */
