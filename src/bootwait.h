@@ -20,7 +20,7 @@ int bw_disk_read(uint32_t lba, uint8_t *buf);           /* 控えから LBA 0-31
 int bw_stage2_read(uint32_t lba, uint8_t *buf);         /* ID 6 の BW_STAGE2: 待ち IPL の後半 */
 void bw_check(const char *path, uint64_t size, bw_read_fn rd, void *ctx);   /* HDS を開いたあと: 比べて、違えば控え直す */
 void bw_reply(uint32_t lba, uint8_t *buf, int hds_open, int sysstat, uint32_t ip, uint32_t uptime_ms,
-              bw_read_fn rd, void *ctx);                /* ID 6 の BW_BAND の読み込みに答える */
+              uint32_t retry_ms, bw_read_fn rd, void *ctx); /* ID 6 の BW_BAND の読み込みに答える */
 const char *bw_state(const char *path);                 /* status 用: none / stored / ok / updated / served / changed */
 
 /* 書き込み (ホスト試験では差し替える) */

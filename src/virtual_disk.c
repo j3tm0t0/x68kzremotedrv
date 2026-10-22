@@ -303,6 +303,16 @@ int vdbuf_rcnt;
 struct vdbuf_header vdbuf_header;
 
 #if BOOTWAIT_SCREEN
+extern volatile uint32_t connect_next_ms;   /* connect.c: 次に繋ぎにいく時刻 (0: 試している最中、UINT32_MAX: 予定なし) */
+
+static uint32_t connect_retry_ms(void)
+{
+    uint32_t next = connect_next_ms, now = to_ms_since_boot(get_absolute_time());
+    if (next == 0 || next == UINT32_MAX)
+        return next;
+    return (int32_t)(next - now) > 0 ? next - now : 0;
+}
+
 static int bw_hds0_read(void *ctx, uint32_t lba, uint8_t *buf)
 {
     return hds_cache_read(diskinfo[0].smb2, diskinfo[0].sfh, lba, buf) < 0 ? -1 : 0;
@@ -547,7 +557,7 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
                 uint32_t ip = lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(&cyw43_state.netif[CYW43_ITF_STA])));
                 bw_reply(lba, buf, !remoteboot && diskinfo[0].type == DTYPE_HDS && diskinfo[0].sfh != NULL,
                          sysstatus, sysstatus >= STAT_WIFI_CONNECTED ? ip : 0,
-                         to_ms_since_boot(get_absolute_time()), bw_hds0_read, NULL);
+                         to_ms_since_boot(get_absolute_time()), connect_retry_ms(), bw_hds0_read, NULL);
                 return 0;
             }
 #endif

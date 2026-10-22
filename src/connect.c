@@ -54,6 +54,14 @@
 uint64_t boottime = 0;
 
 volatile int sysstatus = STAT_WIFI_DISCONNECTED;
+#if BOOTWAIT_SCREEN
+volatile uint32_t connect_next_ms;  /* 次に繋ぎにいく時刻 (0: 試している最中、UINT32_MAX: 予定なし)。待ち IPL に見せる */
+#define NEXT_IN(ms) (connect_next_ms = to_ms_since_boot(get_absolute_time()) + (ms))
+#define NEXT_SET(v) (connect_next_ms = (v))
+#else
+#define NEXT_IN(ms) ((void)0)
+#define NEXT_SET(v) ((void)0)
+#endif
 #if HID_KEYBOARD
 volatile bool connect_finished;     /* 起動時の接続 (繰り直しを含む) が終わった。hidkbd の status 用 */
 #endif
@@ -241,8 +249,10 @@ void connect_task(void *params)
         if (i > 0) {
             printf("Retry connection (%d)\n", i);
             msclog_mark("retry connection %d", i);
+            NEXT_IN(1000);
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
+        NEXT_SET(0);
         connection(sysstatus >= STAT_WIFI_CONNECTED ? CONNECT_SMB2 : CONNECT_WIFI);
     }
     if (sysstatus >= STAT_SMB2_CONNECTED) {
@@ -259,8 +269,10 @@ void connect_task(void *params)
     /* 5 回で通らなくても諦めず、裏で繰り直し続ける (smbd が遅れて上がる、Wi-Fi が遠い など)。
        その間 Z からの HDS の読み書きは NOT READY で待たせている (virtual_disk.c / msc_disk.c) */
     for (int i = 5; sysstatus < STAT_CONFIGURED && strlen(config.wifi_ssid) > 0 && strlen(config.smb2_server) > 0; i++) {
+        NEXT_IN(5000);
         vTaskDelay(pdMS_TO_TICKS(5000));
         xSemaphoreTake(remote_sem, portMAX_DELAY);
+        NEXT_SET(0);
         if (sysstatus < STAT_SMB2_CONNECTED) {
             printf("Retry connection (%d)\n", i);
             msclog_mark("retry connection %d", i);
@@ -273,6 +285,7 @@ void connect_task(void *params)
         xSemaphoreGive(remote_sem);
     }
 #endif
+    NEXT_SET(UINT32_MAX);
 
     while (1) {
         uint32_t nvalue;

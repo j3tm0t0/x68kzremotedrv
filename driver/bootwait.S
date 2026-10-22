@@ -23,6 +23,7 @@ V_T0        = 0x3804                    /* 始めた時刻 (1/100 秒) */
 V_LAST      = 0x3808                    /* 最後に問い合わせた時刻 */
 V_UP        = 0x380c                    /* 最後に受け取った Pico の起動からの ms */
 V_SPIN      = 0x3810
+V_UP0       = 0x3814                    /* 最初に受け取った Pico の起動からの ms (経過秒の起点) */
 LINE        = 0x3900                    /* 表示する行を組み立てる */
 ANIM_LEN    = 24
 BUF         = 0x4000                    /* 応答 3 セクタ */
@@ -36,6 +37,7 @@ main:
     subi.l  #100,%d0
     move.l  %d0,V_LAST.w                /* 最初はすぐ問い合わせる */
     clr.l   V_UP.w
+    clr.l   V_UP0.w
     clr.w   V_SPIN.w
     lea.l   %pc@(m_screen),%a1
     moveq.l #0x21,%d0
@@ -62,7 +64,9 @@ loop:
     trap    #15
     move.l  %d0,%d6
     sub.l   V_LAST.w,%d0
-    bmi     poll                        /* 日付が変わった */
+    bpl     1f
+    neg.l   %d0                         /* 逆に進む時計でも 0.5 秒ごとに (日付の変わり目はすぐ問い合わせる) */
+1:
     cmpi.l  #50,%d0
     blt     loop
 
@@ -95,6 +99,10 @@ poll:
     cmp.l   V_UP.w,%d0
     bcs     loop                        /* 前に読んだものより古い (キャッシュ): 見ない */
     move.l  %d0,V_UP.w
+    tst.l   V_UP0.w
+    bne     7f
+    move.l  %d0,V_UP0.w
+7:
     move.b  %a0@(4),%d0
     cmpi.b  #1,%d0
     beq     ready
@@ -115,7 +123,9 @@ poll:
     bra     show
 
 noresp:
-    clr.l   BUF+8.w                     /* IP は出さない */
+    clr.l   BUF+8.w                     /* IP と再接続の予定は出さない */
+    moveq.l #-1,%d0
+    move.l  %d0,BUF+24.w
     lea.l   %pc@(m_noresp),%a2
 
 show:                                   /* a2 の文言 + IP + 経過秒 + くるくる */
@@ -138,22 +148,29 @@ show:                                   /* a2 の文言 + IP + 経過秒 + く�
     dbra    %d5,1b
     subq.l  #1,%a3                      /* 最後の '.' */
 2:
-    move.b  #' ',%a3@+
-    move.b  #' ',%a3@+
-    move.l  V_LAST.w,%d0
-    sub.l   V_T0.w,%d0
-    bpl     3f
-    addi.l  #8640000,%d0
-3:
-    cmpi.l  #6553500,%d0
-    bcs     4f
-    move.l  #6553500,%d0
-4:
-    divu.w  #100,%d0
-    andi.l  #0xffff,%d0
-    bsr     putdec
+    lea.l   %pc@(m_elapsed),%a4         /* 経過秒は Pico の時計で数える (Z の ONTIME は使わない) */
+    bsr     copystr
+    move.l  V_UP.w,%d0
+    sub.l   V_UP0.w,%d0
+    bsr     putsec
     lea.l   %pc@(m_sec),%a4
     bsr     copystr
+    movea.w #BUF,%a0
+    move.l  %a0@(24),%d0                /* 次の再接続までの ms (0: 試している最中、-1: 予定なし) */
+    cmpi.l  #-1,%d0
+    beq     8f
+    lea.l   %pc@(m_trying),%a4
+    tst.l   %d0
+    beq     9f
+    lea.l   %pc@(m_next),%a4
+    bsr     copystr
+    addi.l  #999,%d0
+    bsr     putsec
+    lea.l   %pc@(m_secp),%a4
+9:
+    bsr     copystr
+8:
+    move.b  #' ',%a3@+
     move.w  V_SPIN.w,%d0
     addq.w  #1,V_SPIN.w
     andi.w  #3,%d0
@@ -230,6 +247,16 @@ copystr:
 1:
     rts
 
+/* d0 (ms) を秒にして a3 に足す */
+putsec:
+    cmpi.l  #65535000,%d0
+    bcs     1f
+    move.l  #65535000,%d0
+1:
+    divu.w  #1000,%d0
+    andi.l  #0xffff,%d0
+    bra     putdec
+
 /* d0 (0-65535) を 10 進で a3 に足す */
 putdec:
     moveq.l #0,%d1
@@ -301,37 +328,45 @@ m_screen:
     .byte   0x1b
     .ascii  "[2J"
     .byte   0x1b
-    .ascii  "[3;22H#   #   ###    ###    ###    ###    ###        #####"
+    .ascii  "[2;13H+---------------------------------------------------------------------+"
     .byte   0x1b
-    .ascii  "[4;22H # #   #      #   #  #  ##  #  ##  #  ##          #"
+    .ascii  "[3;13H|  #     #    ####    #####    #####    #####    #####       #######  |"
     .byte   0x1b
-    .ascii  "[5;22H  #    ####    ###   # # #  # # #  # # #         #"
+    .ascii  "[4;13H|   #   #    #       #     #  #    ##  #    ##  #    ##           #   |"
     .byte   0x1b
-    .ascii  "[6;22H # #   #   #  #   #  ##  #  ##  #  ##  #        #"
+    .ascii  "[5;13H|    # #    #        #     #  #   # #  #   # #  #   # #          #    |"
     .byte   0x1b
-    .ascii  "[7;22H#   #   ###    ###    ###    ###    ###        #####"
+    .ascii  "[6;13H|     #     ######    #####   #  #  #  #  #  #  #  #  #         #     |"
     .byte   0x1b
-    .ascii  "[9;22H-- Raspberry Pi Pico W / x68kzremotedrv --"
+    .ascii  "[7;13H|    # #    #     #  #     #  # #   #  # #   #  # #   #        #      |"
     .byte   0x1b
-    .ascii  "[11;5H"
+    .ascii  "[8;13H|   #   #   #     #  #     #  ##    #  ##    #  ##    #       #       |"
+    .byte   0x1b
+    .ascii  "[9;13H|  #     #   #####    #####    #####    #####    #####       #######  |"
+    .byte   0x1b
+    .ascii  "[10;13H+---------------------------------------------------------------------+"
+    .byte   0x1b
+    .ascii  "[11;27H-- Raspberry Pi Pico W / x68kzremotedrv --"
+    .byte   0x1b
+    .ascii  "[13;5H"
     /* Pico: SMB 接続待ち… (Wi-Fi/SMB を確認してください) */
     .byte   0x50,0x69,0x63,0x6f,0x3a,0x20,0x53,0x4d,0x42,0x20,0x90,0xda,0x91,0xb1,0x91,0xd2,0x82,0xbf,0x81,0x63,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x2f,0x53,0x4d,0x42,0x20,0x82,0xf0,0x8a,0x6d,0x94,0x46,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2,0x29
     .byte   0x1b
-    .ascii  "[17;5H"
+    .ascii  "[19;5H"
     /* [S] 設定画面 (Wi-Fi / SMB / HDS)   ([F1] でも入れます) */
     .byte   0x5b,0x53,0x5d,0x20,0x90,0xdd,0x92,0xe8,0x89,0xe6,0x96,0xca,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x20,0x2f,0x20,0x53,0x4d,0x42,0x20,0x2f,0x20,0x48,0x44,0x53,0x29,0x20,0x20,0x20,0x28,0x5b,0x46,0x31,0x5d,0x20,0x82,0xc5,0x82,0xe0,0x93,0xfc,0x82,0xea,0x82,0xdc,0x82,0xb7,0x29
     .byte   0x1b
-    .ascii  "[18;5H"
+    .ascii  "[20;5H"
     /* ※ 設定で HDS を変えたら、Z の電源を入れ直してください */
     .byte   0x81,0xa6,0x20,0x90,0xdd,0x92,0xe8,0x82,0xc5,0x20,0x48,0x44,0x53,0x20,0x82,0xf0,0x95,0xcf,0x82,0xa6,0x82,0xbd,0x82,0xe7,0x81,0x41,0x5a,0x20,0x82,0xcc,0x93,0x64,0x8c,0xb9,0x82,0xf0,0x93,0xfc,0x82,0xea,0x92,0xbc,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2
     .byte   0
 e_row2:
     .byte   0x1b
-    .ascii  "[13;5H"
+    .ascii  "[15;5H"
     .byte   0
 m_anim1:
     .byte   0x1b
-    .ascii  "[15;5H[Pico W] "
+    .ascii  "[17;5H[Pico W] "
     .byte   0
 m_anim2:
     .ascii  " [X68000 Z]"
@@ -360,11 +395,19 @@ m_ip:
     .ascii  "  IP "
     .byte   0
 m_sec:      /* 秒 */
-    .byte   0x20,0x95,0x62,0x20,0
+    .byte   0x20,0x95,0x62,0
+m_elapsed:  /* 経過 */
+    .byte   0x20,0x20,0x8c,0x6f,0x89,0xdf,0x20,0
+m_trying:   /*   (接続を試しています) */
+    .byte   0x20,0x20,0x28,0x90,0xda,0x91,0xb1,0x82,0xf0,0x8e,0x8e,0x82,0xb5,0x82,0xc4,0x82,0xa2,0x82,0xdc,0x82,0xb7,0x29,0
+m_next:     /*   (次の再接続まで */
+    .byte   0x20,0x20,0x28,0x8e,0x9f,0x82,0xcc,0x8d,0xc4,0x90,0xda,0x91,0xb1,0x82,0xdc,0x82,0xc5,0x20,0
+m_secp:     /*  秒) */
+    .byte   0x20,0x95,0x62,0x29,0
 m_spin:
     .ascii  ".oOo"                      /* \ は X68k では円記号なので使わない */
 m_pad:
-    .ascii  "          "
+    .ascii  "                              "
     .byte   0
     .even
 

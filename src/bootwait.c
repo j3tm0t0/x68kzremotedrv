@@ -163,7 +163,7 @@ static int ipl_sector(int k, uint8_t *buf, bw_read_fn rd, void *ctx)
 }
 
 void bw_reply(uint32_t lba, uint8_t *buf, int hds_open, int sysstat, uint32_t ip, uint32_t uptime_ms,
-              bw_read_fn rd, void *ctx)
+              uint32_t retry_ms, bw_read_fn rd, void *ctx)
 {
     uint32_t j = (lba - BW_BAND) % BW_STRIDE;
     int st;
@@ -200,6 +200,7 @@ void bw_reply(uint32_t lba, uint8_t *buf, int hds_open, int sysstat, uint32_t ip
         put32(buf + 12, uptime_ms);
         put32(buf + 16, lba);
         put32(buf + 20, st == BW_READY ? ipl_sum : 0);
+        put32(buf + 24, retry_ms);
     } else if (j <= 2 && st == BW_READY) {
         if (ipl_sector(j - 1, buf, rd, ctx) != 0)
             memset(buf, 0, 512);

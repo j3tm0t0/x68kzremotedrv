@@ -6,7 +6,7 @@ IOCS (trap #15) は ここで真似る: B_BITSNS (F1)、B_KEYSNS / B_KEYINP (S)�
 SCSIDRV S_READEXT。
 SCSI の読み込みは Z の Linux と同じく LBA ごとにキャッシュし、同じ LBA は二度と Pico に聞かない。
 """
-import ctypes, os, shutil, struct, sys, tempfile
+import ctypes, os, re, shutil, struct, sys, tempfile
 from unicorn import Uc, UC_ARCH_M68K, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE, UcError
 from unicorn.m68k_const import *
 
@@ -65,6 +65,7 @@ class Pico:
         self.lib.bw_state.restype = ctypes.c_char_p
         self.hds_open = 0
         self.sysstat = 0
+        self.retry = 0xffffffff                     # 次の再接続までの ms
         self.image = None
         self._rd = READFN(self._read)
 
@@ -92,6 +93,7 @@ class Pico:
             self.lib.bw_stage2_read(lba, b)
         elif BW_BAND <= lba < BW_BAND_END:
             self.lib.bw_reply(lba, b, self.hds_open, self.sysstat, IP if self.sysstat >= 2 else 0, uptime,
+                              ctypes.c_uint32(self.retry if callable(self.retry) is False else self.retry()),
                               self._rd, None)
         return bytes(b)
 
@@ -110,6 +112,7 @@ class Z:
         self.noreply = noreply
         self.clock = clock                          # ONTIME (1/100 秒)
         self.mono = 0                               # Pico の起動からの時間 (戻らない)
+        self.step = 2                               # ONTIME 1 回で進む 1/100 秒
         self.cache = {}
         self.polls = []
         self.poll_clock = []
@@ -161,7 +164,7 @@ class Z:
                 p += 1
             self.screen.append(bytes(s).decode('cp932', 'replace'))
         elif fn == 0x7f:                            # ONTIME
-            self.clock += 2
+            self.clock += self.step
             self.mono += 2
             u.reg_write(D[0], self.clock % 8640000)
             u.reg_write(D[1], 0)
@@ -250,8 +253,10 @@ def first_boot_flash():
 def scenario_wait_then_ready(fl):
     p = Pico(fl)
     steps = {3: 1, 6: 2, 9: 3}
+    p.retry = 0
 
     def on_poll(z, n):
+        p.retry = {7: 3200, 8: 2700}.get(n, 0)     # 7, 8 回目は「次の再接続まで」
         if n in steps:
             p.sysstat = steps[n]
         if n == 12:
@@ -267,7 +272,11 @@ def scenario_wait_then_ready(fl):
     check(r[0] == 'jumped' and r[3] == 0, 'd4 (SCSI ID from the ROM) restored to 0')
     t = z.text()
     check('Pico: SMB 接続待ち' in t, 'title shown')
-    check('#   #   ###    ###    ###    ###    ###        #####' in t and '\\' not in t, 'X68000 Z banner shown (no backslash: it is a yen sign on the X68k)')
+    art = open(os.path.join(HERE, 'art.txt'), encoding='ascii').read().splitlines()
+    check(len(art) >= 8 and all(l in t for l in art) and '\\' not in t, 'X68000 Z banner (%d lines) shown, no backslash (a yen sign on the X68k)' % len(art))
+    secs = [int(m) for m in re.findall(r'経過 (\d+) 秒', t)]
+    check(len(secs) >= 10 and secs == sorted(secs) and secs[-1] > secs[0], 'elapsed seconds count up (%s)' % secs)
+    check('(次の再接続まで 4 秒)' in t and '(次の再接続まで 3 秒)' in t and '(接続を試しています)' in t, 'next-retry countdown and "trying" shown')
     check('[S] 設定画面 (Wi-Fi / SMB / HDS)' in t and '電源を入れ直してください' in t, 'setup key and power-cycle note shown')
     anim = [l for l in t.split('\n') if '[Pico W]' in l]
     check(len(anim) >= 3 and len(set(anim)) >= 3 and all(l.split('[Pico W] ')[1][:24].count('o') == 1 for l in anim),
@@ -349,6 +358,24 @@ def scenario_ready_at_once(fl):
     check(r[0] == 'jumped' and r[2] == 0x55 and len(z.polls) == 1, 'already open: chain-loads on the first poll (%r, %d polls)' % (r, len(z.polls)))
 
 
+def scenario_clock_backwards(fl):
+    """Z の ONTIME が逆に進んでも 0.5 秒ごとに新しい番地を読み、経過秒は Pico の時計で増える"""
+    p = Pico(fl)
+
+    def on_poll(z, n):
+        if n == 10:
+            p.check(hds_image())
+            p.sysstat = 5
+            p.hds_open = 1
+
+    z = Z(p, on_poll)
+    z.step = -2
+    r = z.boot()
+    secs = [int(m) for m in re.findall(r'経過 (\d+) 秒', z.text())]
+    check(r[0] == 'jumped' and len(set(z.polls)) == len(z.polls) and secs == sorted(secs),
+          'backwards ONTIME: fresh polls, seconds still count up (%r, %s)' % (r[0], secs))
+
+
 def scenario_f1(fl):
     p = Pico(fl)
     z = Z(p, f1_at=2)
@@ -383,6 +410,7 @@ def main():
     scenario_noreply(fl)
     scenario_stale(fl)
     scenario_ready_at_once(fl)
+    scenario_clock_backwards(fl)
     scenario_f1(fl)
     scenario_key_s(fl)
     scenario_nohds(fl)
