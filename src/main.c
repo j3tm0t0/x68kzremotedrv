@@ -40,6 +40,7 @@
 #include "virtual_disk.h"
 #include "config_file.h"
 #include "hidkbd.h"
+#include "msclog.h"
 
 //****************************************************************************
 // Global variables
@@ -96,6 +97,9 @@ static void main_task(void *params)
     xTaskCreate(keepalive_task, "KeepAliveThread", 2048, NULL, 1, &keepalive_th);
 
     vd_init();
+    msclog_init();
+    hidkbd_init();
+    msclog_mark("boot %s", GIT_REPO_VERSION);
 
 #if HID_KEYBOARD
     printf("Start USB MSC + HID keyboard device.\n");
@@ -120,10 +124,12 @@ static void main_task(void *params)
 // Invoked when device is mounted
 void tud_mount_cb(void)
 {
+    msclog_usb("mount");
 }
 // Invoked when device is unmounted
 void tud_umount_cb(void)
 {
+    msclog_usb("umount");
 }
 
 // Invoked when usb bus is suspended

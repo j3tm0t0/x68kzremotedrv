@@ -83,6 +83,14 @@ if(HID_KEYBOARD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HID_KEYBOARD=1 MEMP_NUM_UDP_PCB=6)
 endif()
 
+# 起動時の調査用: Z からの MSC の命令を 1 件 1 行の UDP で MSC_LOG_HOST:6870 に送る (src/msclog.c)。-DMSC_LOG=ON で入れる
+option(MSC_LOG "Log USB MSC commands over UDP (boot-time investigation)" OFF)
+set(MSC_LOG_HOST "192.168.1.108" CACHE STRING "Receiver of the MSC log (UDP 6870)")
+if(MSC_LOG)
+    target_sources(${PROJECT_NAME} PRIVATE src/msclog.c)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE MSC_LOG=1 MSC_LOG_HOST="${MSC_LOG_HOST}")
+endif()
+
 pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_enable_stdio_uart(${PROJECT_NAME} 1)
 pico_enable_stdio_semihosting(${PROJECT_NAME} 0)

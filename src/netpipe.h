@@ -10,6 +10,9 @@
                                            0x200000 以降は scsiremote.sys が使う */
 
 int netpipe_write(uint32_t lba, const uint8_t *buf);
+#if HID_KEYBOARD
+extern volatile uint32_t netpipe_xchg;  /* 交換の回数 (hidkbd の status 用) */
+#endif
 int netpipe_read(uint32_t lba, uint8_t *buf);
 
 #endif  /* _NETPIPE_H_ */

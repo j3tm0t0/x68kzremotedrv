@@ -13,10 +13,12 @@
 void accel_init(void);
 void accel_submit(const uint8_t *payload, int len);     /* 要求レコードの中身 (ACCEL_MARK から)。USB タスクから */
 int accel_result(uint8_t *dst);                         /* 応答があれば dst に写して長さを返す (無ければ 0)。USB タスクから */
+const char *accel_state(uint32_t *done);                /* "ready" "busy" "wait" (netpipe がまだ開いていない)。status 用 */
 #else
 #define accel_init()            ((void)0)
 #define accel_submit(p, n)      ((void)0)
 #define accel_result(d)         0
+#define accel_state(d)          (*(d) = 0, "off")
 #endif
 
 #endif

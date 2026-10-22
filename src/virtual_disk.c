@@ -41,6 +41,7 @@
 #include "remoteserv.h"
 #include "fileop.h"
 #include "netpipe.h"
+#include "msclog.h"
 
 #include "scsiremote.inc"
 #include "bootloader.inc"
@@ -186,7 +187,14 @@ static void vd_sync(void)
 {
     static bool synced = false;
     if (!synced) {
+#if MSC_LOG
+        uint32_t t = to_ms_since_boot(get_absolute_time());
+        msclog_mark("vd_sync wait (sysstatus %d)", sysstatus);
+#endif
         xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+#if MSC_LOG
+        msclog_mark("vd_sync done %lums", (unsigned long)(to_ms_since_boot(get_absolute_time()) - t));
+#endif
         synced = true;
     }
 }

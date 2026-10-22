@@ -44,6 +44,7 @@
 #include "main.h"
 #include "virtual_disk.h"
 #include "config_file.h"
+#include "msclog.h"
 
 //****************************************************************************
 // Global variables
@@ -52,6 +53,9 @@
 uint64_t boottime = 0;
 
 volatile int sysstatus = STAT_WIFI_DISCONNECTED;
+#if HID_KEYBOARD
+volatile bool connect_finished;     /* 起動時の接続 (繰り直しを含む) が終わった。hidkbd の status 用 */
+#endif
 
 const char *rootpath[8];
 
@@ -78,6 +82,7 @@ static void connection(int mode)
                                                CYW43_AUTH_WPA2_AES_PSK, 30000)) {
             sysstatus = STAT_WIFI_DISCONNECTED;
             printf("Failed to connect.\n");
+            msclog_mark("wifi failed");
             break;
         }
 
@@ -107,11 +112,13 @@ static void connection(int mode)
         struct smb2_context *smb2ipc;
 
         if ((smb2ipc = connect_smb2("IPC$")) == NULL) {
+            msclog_mark("smb2 failed");
             sysstatus = STAT_WIFI_CONNECTED;
             break;
         }
 
         sysstatus = STAT_SMB2_CONNECTED;
+        msclog_mark("smb2 connected");
 
         boottime = (smb2_get_system_time(smb2ipc) / 10) - (11644473600 * 1000000) - to_us_since_boot(get_absolute_time());
         time_t tt = (time_t)((boottime + to_us_since_boot(get_absolute_time())) / 1000000);
@@ -164,15 +171,18 @@ static int vd_mount(void)
         struct smb2_stat_64 st;
         if (smb2_stat(smb2, shpath, &st) < 0 || st.smb2_type != SMB2_TYPE_FILE) {
             printf("File %s not found.\n", config.hds[i]);
+            msclog_mark("HDS%u not found", i);
             continue;
         }
         if ((diskinfo[id].sfh = smb2_open(smb2, shpath, O_RDWR)) == NULL) {
             printf("File %s open failure.\n", config.hds[i]);
+            msclog_mark("HDS%u open failure", i);
             continue;
         }
         diskinfo[id].smb2 = smb2;
         diskinfo[id].size = st.smb2_size;
         printf("HDS%u: %s size=%lld\n", i, config.hds[i], st.smb2_size);
+        msclog_mark("HDS%u opened id%d size=%lld", i, id, st.smb2_size);
     }
 
     for (int i = 0; i < 7; i++) {
@@ -197,6 +207,7 @@ void connect_task(void *params)
     for (int i = 0; i < 5 && sysstatus < STAT_SMB2_CONNECTED; i++) {
         if (i > 0) {
             printf("Retry connection (%d)\n", i);
+            msclog_mark("retry connection %d", i);
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
         connection(sysstatus >= STAT_WIFI_CONNECTED ? CONNECT_SMB2 : CONNECT_WIFI);
@@ -204,6 +215,10 @@ void connect_task(void *params)
     if (sysstatus >= STAT_SMB2_CONNECTED) {
         vd_mount();
     }
+    msclog_mark("connect done, notify USB (sysstatus %d)", sysstatus);
+#if HID_KEYBOARD
+    connect_finished = true;
+#endif
     xSemaphoreGive(remote_sem);
     xTaskNotify(main_th, 1, eSetBits);
 

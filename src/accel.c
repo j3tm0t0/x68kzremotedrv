@@ -99,6 +99,16 @@ void accel_submit(const uint8_t *payload, int len)
     xTaskNotifyGive(accel_th);
 }
 
+#if HID_KEYBOARD
+const char *accel_state(uint32_t *done)
+{
+    *done = st_done;
+    if (accel_th == NULL)
+        return "wait";
+    return req_len != 0 ? "busy" : "ready";
+}
+#endif
+
 /* 応答があれば dst に写して長さを返す (USB タスク)。BUSY の即答が先 */
 int accel_result(uint8_t *dst)
 {

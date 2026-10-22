@@ -27,12 +27,17 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "virtual_disk.h"
+#include "msclog.h"
 
 enum
 {
   DISK_BLOCK_NUM  = VOLUME_SECTOR_COUNT,
   DISK_BLOCK_SIZE = SECTOR_SIZE
 };
+
+#if HID_KEYBOARD
+volatile uint32_t msc_reads, msc_writes;    // 読み書きしたセクタ数 (hidkbd の status 用)
+#endif
 
 // Invoked when received SCSI_CMD_INQUIRY
 // Application fill vendor id, product id and revision with string up to 8, 16, 4 characters respectively
@@ -97,7 +102,12 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void* buff
   // out of ramdisk
   if ( lba >= DISK_BLOCK_NUM ) return -1;
 
-  vd_read_block(lba, buffer);
+  int rc = vd_read_block(lba, buffer);
+  msclog_rw('R', lun, lba, rc, buffer);
+#if HID_KEYBOARD
+  msc_reads++;
+#endif
+  (void) rc;
   return bufsize;
 }
 
@@ -108,7 +118,12 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t* 
   // out of ramdisk
   if ( lba >= DISK_BLOCK_NUM ) return -1;
 
-  vd_write_block(lba, buffer);
+  int rc = vd_write_block(lba, buffer);
+  msclog_rw('W', lun, lba, rc, NULL);
+#if HID_KEYBOARD
+  msc_writes++;
+#endif
+  (void) rc;
   return bufsize;
 }
 

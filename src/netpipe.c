@@ -443,6 +443,10 @@ static bool np_open(void)
     return pcb != NULL;
 }
 
+#if HID_KEYBOARD
+volatile uint32_t netpipe_xchg;
+#endif
+
 /* 要求がそろったら呼ぶ: 送信して、応答を resbuf に作る */
 static void np_exchange(void)
 {
@@ -453,6 +457,9 @@ static void np_exchange(void)
     uint32_t z = rq->stat;              /* ネットワークバイトオーダーのまま (X68000 もビッグエンディアン) */
     bool r = z != 0 && rq->magic == be32(NETPIPE_MAGIC_R);
     int n = 0;
+#if HID_KEYBOARD
+    netpipe_xchg++;
+#endif
 
     if (np_open()) {
         if (z != zip || r != raw) {
