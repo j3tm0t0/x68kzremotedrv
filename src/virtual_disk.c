@@ -42,6 +42,7 @@
 #include "fileop.h"
 #include "netpipe.h"
 #include "msclog.h"
+#include "bootwait.h"
 
 #include "scsiremote.inc"
 #include "bootloader.inc"
@@ -301,6 +302,13 @@ int vdbuf_rcnt;
 
 struct vdbuf_header vdbuf_header;
 
+#if BOOTWAIT_SCREEN
+static int bw_hds0_read(void *ctx, uint32_t lba, uint8_t *buf)
+{
+    return hds_cache_read(diskinfo[0].smb2, diskinfo[0].sfh, lba, buf) < 0 ? -1 : 0;
+}
+#endif
+
 int vd_read_block(uint32_t lba, uint8_t *buf)
 {
     memset(buf, 0, 512);
@@ -429,8 +437,20 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
 #if BOOTWAIT
         /* 接続を待って USB タスクを止めない (止めている間に Z の Linux が 30 秒で諦めてリセットする)。
            HDS が開けるまでは NOT READY を返し、Z の Linux に待たせる。ID 6 (netpipe など) は接続と関係なく答える */
-        if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh == NULL)
+        if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh == NULL) {
+#if BOOTWAIT_SCREEN
+            /* 起動ディスクの先頭は控えのとおりに返す (IPL は待ち IPL)。控えが無ければ NOT READY */
+            if (id == 0 && !remoteboot && lba < BW_SNAP_SECTS && bw_usable(config.hds[0])) {
+                static bool marked;
+                if (!marked) {
+                    marked = true;
+                    msclog_mark("snapshot served (waiting IPL)");
+                }
+                return bw_disk_read(lba, buf);
+            }
+#endif
             return sysstatus >= STAT_CONFIGURED ? VD_IOERR : VD_NOTREADY;
+        }
         if (diskinfo[id].type == DTYPE_REMOTEBOOT)
             vd_sync();
 #else
@@ -519,6 +539,18 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
             if (lba >= NETPIPE_RLBA && lba < NETPIPE_REND) {
                 return netpipe_read(lba, buf);
             }
+#if BOOTWAIT_SCREEN
+            if (lba >= BW_STAGE2 && lba < BW_STAGE2 + BW_STAGE2_SECTS)
+                return bw_stage2_read(lba, buf);
+            if (lba >= BW_BAND && lba < BW_BAND_END) {
+                // 待ち IPL (driver/bootwait.S) の問い合わせ
+                uint32_t ip = lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(&cyw43_state.netif[CYW43_ITF_STA])));
+                bw_reply(lba, buf, !remoteboot && diskinfo[0].type == DTYPE_HDS && diskinfo[0].sfh != NULL,
+                         sysstatus, sysstatus >= STAT_WIFI_CONNECTED ? ip : 0,
+                         to_ms_since_boot(get_absolute_time()), bw_hds0_read, NULL);
+                return 0;
+            }
+#endif
             if (lba >= (0x20000 / 512) && lba < (0x40000 / 512)) {
                 // settingui.bin
                 lba -= 0x20000 / 512;

@@ -45,6 +45,7 @@
 #include "virtual_disk.h"
 #include "config_file.h"
 #include "msclog.h"
+#include "bootwait.h"
 
 //****************************************************************************
 // Global variables
@@ -134,6 +135,19 @@ static void connection(int mode)
     }
 }
 
+#if BOOTWAIT_SCREEN
+struct bw_ctx {
+    struct smb2_context *smb2;
+    struct smb2fh *sfh;
+};
+
+static int bw_hds_read(void *ctx, uint32_t lba, uint8_t *buf)
+{
+    struct bw_ctx *c = ctx;
+    return hds_cache_read(c->smb2, c->sfh, lba, buf) < 0 ? -1 : 0;
+}
+#endif
+
 static int vd_mount(void)
 {
     uint32_t nvalue;
@@ -174,6 +188,24 @@ static int vd_mount(void)
             msclog_mark("HDS%u not found", i);
             continue;
         }
+#if BOOTWAIT_SCREEN
+        /* 起動ディスク (ID 0) なら先頭を控えと比べる。USB タスクに見せる (sfh を入れる) 前に済ませる:
+           それまで Z からの読み込みは控えか NOT READY で答えている (libsmb2 の同じ接続を 2 つのタスクで使わない) */
+        struct smb2fh *fh;
+        if ((fh = smb2_open(smb2, shpath, O_RDWR)) == NULL) {
+            printf("File %s open failure.\n", config.hds[i]);
+            msclog_mark("HDS%u open failure", i);
+            continue;
+        }
+        if (id == 0) {
+            struct bw_ctx c = { smb2, fh };
+            bw_check(config.hds[i], st.smb2_size, bw_hds_read, &c);
+            msclog_mark("snapshot %s", bw_state(config.hds[i]));
+        }
+        diskinfo[id].smb2 = smb2;
+        diskinfo[id].size = st.smb2_size;
+        diskinfo[id].sfh = fh;
+#else
         if ((diskinfo[id].sfh = smb2_open(smb2, shpath, O_RDWR)) == NULL) {
             printf("File %s open failure.\n", config.hds[i]);
             msclog_mark("HDS%u open failure", i);
@@ -181,6 +213,7 @@ static int vd_mount(void)
         }
         diskinfo[id].smb2 = smb2;
         diskinfo[id].size = st.smb2_size;
+#endif
         printf("HDS%u: %s size=%lld\n", i, config.hds[i], st.smb2_size);
         msclog_mark("HDS%u opened id%d size=%lld", i, id, st.smb2_size);
     }

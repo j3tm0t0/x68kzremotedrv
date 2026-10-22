@@ -16,7 +16,8 @@
  *
  * 記録は USB タスク (と接続タスク) がリングに積み、専用タスクが Wi-Fi がつながってから送る (つながる前の分も残る)。
  * 多すぎないよう、USB の mount のあとと、2 秒以上命令が途切れたあとの MSCLOG_BUDGET 件だけを送る。
- * ID 6 の netpipe と scsiremote (B:) の帯 (HDS の LBA 0x100000 以上) は記録せず数だけ数える。
+ * ID 6 の netpipe と scsiremote (B:) の帯 (HDS の LBA 0x100000 以上) と、待ち IPL の問い合わせ (0x80-0x87、
+ * 0x40000-0xfffff) は記録せず数だけ数える。
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -122,9 +123,11 @@ static void flush_cur(void)
 
 void msclog_rw(char dir, uint8_t lun, uint32_t lba, int rc, const uint8_t *buf)
 {
-    if (lba >= HDS_BASE && (lba - HDS_BASE) / HDS_SPAN == 6 && (lba - HDS_BASE) % HDS_SPAN >= 0x100000) {
+    uint32_t h6 = (lba - HDS_BASE) % HDS_SPAN;
+    if (lba >= HDS_BASE && (lba - HDS_BASE) / HDS_SPAN == 6 &&
+        (h6 >= 0x100000 || (h6 >= 0x40000 && h6 < 0x100000) || (h6 >= 0x80 && h6 < 0x88))) {
         flush_cur();
-        skip_count++;                   /* netpipe / scsiremote の帯 */
+        skip_count++;                   /* netpipe / scsiremote の帯、待ち IPL の問い合わせ (BW_BAND / BW_STAGE2) */
         return;
     }
     if (cur_open && (cur.kind != dir || cur.lun != lun || lba != cur.lba + cur.n))

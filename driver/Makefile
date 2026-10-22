@@ -51,7 +51,7 @@ ifneq ($(DEBUG),)
 CFLAGS += -DDEBUG
 endif
 
-all: scsiremote.inc bootloader.inc hdsboot.inc settingui.inc clrconfig.uf2 zrmtrescue.xdf
+all: scsiremote.inc bootloader.inc hdsboot.inc bootwait.inc bootwait1.inc settingui.inc clrconfig.uf2 zrmtrescue.xdf
 
 uitest:
 	$(MAKE) CFLAGS_XTEST=-DXTEST clean settingui.x
@@ -75,6 +75,12 @@ bootloader.bin: bootloader.o
 	$(OBJCOPY) -O binary $< $@
 
 hdsboot.bin: hdsboot.o
+	$(OBJCOPY) -O binary $< $@
+
+bootwait.bin: bootwait.o
+	$(OBJCOPY) -O binary $< $@
+
+bootwait1.bin: bootwait1.o
 	$(OBJCOPY) -O binary $< $@
 
 rescueboot.bin: rescueboot.o

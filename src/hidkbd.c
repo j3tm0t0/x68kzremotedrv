@@ -36,6 +36,7 @@
 #include "virtual_disk.h"
 #include "netpipe.h"
 #include "accel.h"
+#include "bootwait.h"
 #include "hidkbd_cmd.h"
 #include "hidkbd.h"
 
@@ -170,6 +171,10 @@ static int status_line(char *s, int size)
 #if BOOTWAIT
     if (n < size)
         n += snprintf(s + n, size - n, " notready=%lu ioerr=%lu", (unsigned long)msc_notready, (unsigned long)msc_ioerr);
+#endif
+#if BOOTWAIT_SCREEN
+    if (n < size)
+        n += snprintf(s + n, size - n, " snap=%s", bw_state(config.hds[0]));
 #endif
     return n < size ? n : size - 1;
 }

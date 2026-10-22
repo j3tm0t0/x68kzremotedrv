@@ -89,6 +89,13 @@ option(BOOTWAIT "Answer NOT READY until the HDS is open instead of blocking / re
 if(BOOTWAIT)
     target_compile_definitions(${PROJECT_NAME} PRIVATE BOOTWAIT=1)
 endif()
+# BOOTWAIT のとき、HDS の先頭 16KB をフラッシュ (0x1e0000) に控え、開けるまで待ち IPL で Z の画面に接続待ちを出す (src/bootwait.c)
+option(BOOTWAIT_SCREEN "Show a waiting message on the Z while the HDS isn't open (needs BOOTWAIT)" ON)
+if(BOOTWAIT AND BOOTWAIT_SCREEN)
+    target_sources(${PROJECT_NAME} PRIVATE src/bootwait.c src/bootwait_pico.c)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BOOTWAIT_SCREEN=1)
+    target_link_libraries(${PROJECT_NAME} pico_flash)
+endif()
 
 # 起動時の調査用: Z からの MSC の命令を 1 件 1 行の UDP で MSC_LOG_HOST:6870 に送る (src/msclog.c)。-DMSC_LOG=ON で入れる
 option(MSC_LOG "Log USB MSC commands over UDP (boot-time investigation)" OFF)
