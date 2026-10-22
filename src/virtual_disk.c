@@ -392,7 +392,9 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
         if (!imagedir_init) {
             /* Lazy initialization of "X68000Z/image" directory */
             struct dir_entry *dirent;
+#if !BOOTWAIT
             vd_sync();
+#endif
             memset(imagedir, 0,  sizeof(imagedir));
             dirent = (struct dir_entry *)imagedir;
             init_dir_entry(dirent++, ".          ", ATTR_DIR, 0, 4, 0);
@@ -424,7 +426,16 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
             return -1;
         DPRINTF3("disk %d: read 0x%x\n", id, lba);
 
+#if BOOTWAIT
+        /* 接続を待って USB タスクを止めない (止めている間に Z の Linux が 30 秒で諦めてリセットする)。
+           HDS が開けるまでは NOT READY を返し、Z の Linux に待たせる。ID 6 (netpipe など) は接続と関係なく答える */
+        if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh == NULL)
+            return sysstatus >= STAT_CONFIGURED ? VD_IOERR : VD_NOTREADY;
+        if (diskinfo[id].type == DTYPE_REMOTEBOOT)
+            vd_sync();
+#else
         vd_sync();
+#endif
 
         if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh != NULL) {
             if (lba == 2) {
@@ -436,7 +447,7 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
                 lba -= 0x20 - 2;
             }
             if (hds_cache_read(diskinfo[id].smb2, diskinfo[id].sfh, lba, buf) < 0)
-                return -1;
+                return BOOTWAIT ? VD_IOERR : -1;
             return 0;
         }
 
@@ -537,6 +548,12 @@ static int configtxtlen = 0;
 
 int vd_write_block(uint32_t lba, uint8_t *buf)
 {
+#if BOOTWAIT
+    if (lba == 0x4160) {
+        // "X68000Z/image" directory: Z の Linux がファイルの更新時刻を書き戻すだけ (捨てる)
+        return 0;
+    }
+#endif
     if (lba == 0x4020) {
         // Root directory
         if (memcmp(&buf[32], "CONFIG  TXT", 11) == 0) {
@@ -573,11 +590,17 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
             return -1;
         DPRINTF3("disk %d: write 0x%x\n", id, lba);
 
+#if BOOTWAIT
+        if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh == NULL)
+            return sysstatus >= STAT_CONFIGURED ? VD_IOERR : VD_NOTREADY;
+        if (diskinfo[id].type == DTYPE_REMOTECOMM && lba >= NETPIPE_WLBA && lba < NETPIPE_WLBA + 8)
+            return netpipe_write(lba, buf);     /* netpipe は SMB の接続を待たない */
+#endif
         vd_sync();
 
         if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh != NULL) {
             if (hds_cache_write(diskinfo[id].smb2, diskinfo[id].sfh, lba, buf) < 0)
-                return -1;
+                return BOOTWAIT ? VD_IOERR : -1;
             return 0;
         }
         if (diskinfo[id].type == DTYPE_REMOTECOMM) {

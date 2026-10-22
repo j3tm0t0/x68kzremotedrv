@@ -57,6 +57,9 @@ static TaskHandle_t st_th;
 extern volatile bool connect_finished;          /* connect.c */
 extern const char *rootpath[8];                 /* connect.c */
 extern volatile uint32_t msc_reads, msc_writes; /* msc_disk.c */
+#if BOOTWAIT
+extern volatile uint32_t msc_notready, msc_ioerr;
+#endif
 
 /* USB タスクだけが触る */
 static struct hidkbd_cmd cmd;
@@ -134,7 +137,7 @@ static const char *smb_state(void)
     case STAT_SMB2_CONNECTED:   return "connected";
     case STAT_SMB2_CONNECTING:  return "connecting";
     }
-    return connect_finished ? "failed" : "waiting";
+    return connect_finished ? (BOOTWAIT ? "retrying" : "failed") : "waiting";
 }
 
 /* status の 1 行を作る。cyw43_arch_lwip_begin の中で呼ぶ (RSSI を cyw43 に聞く) */
@@ -164,6 +167,10 @@ static int status_line(char *s, int size)
                       (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000), tud_mounted() ? "mounted" : "unmounted",
                       (unsigned long)msc_reads, (unsigned long)msc_writes, (unsigned long)netpipe_xchg, acc, (unsigned long)done,
                       pending ? "busy" : (tud_hid_ready() ? "ok" : "notready"), (int)(&__HeapLimit - (char *)sbrk(0)));
+#if BOOTWAIT
+    if (n < size)
+        n += snprintf(s + n, size - n, " notready=%lu ioerr=%lu", (unsigned long)msc_notready, (unsigned long)msc_ioerr);
+#endif
     return n < size ? n : size - 1;
 }
 

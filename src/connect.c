@@ -222,6 +222,25 @@ void connect_task(void *params)
     xSemaphoreGive(remote_sem);
     xTaskNotify(main_th, 1, eSetBits);
 
+#if BOOTWAIT
+    /* 5 回で通らなくても諦めず、裏で繰り直し続ける (smbd が遅れて上がる、Wi-Fi が遠い など)。
+       その間 Z からの HDS の読み書きは NOT READY で待たせている (virtual_disk.c / msc_disk.c) */
+    for (int i = 5; sysstatus < STAT_CONFIGURED && strlen(config.wifi_ssid) > 0 && strlen(config.smb2_server) > 0; i++) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        xSemaphoreTake(remote_sem, portMAX_DELAY);
+        if (sysstatus < STAT_SMB2_CONNECTED) {
+            printf("Retry connection (%d)\n", i);
+            msclog_mark("retry connection %d", i);
+            connection(sysstatus >= STAT_WIFI_CONNECTED ? CONNECT_SMB2 : CONNECT_WIFI);
+        }
+        if (sysstatus >= STAT_SMB2_CONNECTED) {
+            vd_mount();
+            msclog_mark("connected after retry %d (sysstatus %d)", i, sysstatus);
+        }
+        xSemaphoreGive(remote_sem);
+    }
+#endif
+
     while (1) {
         uint32_t nvalue;
 

@@ -83,6 +83,13 @@ if(HID_KEYBOARD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HID_KEYBOARD=1 MEMP_NUM_UDP_PCB=6)
 endif()
 
+# HDS が開けるまで Z の読み書きに NOT READY (04/01) を返して待たせ、接続は裏で繰り直し続ける (0 埋めを返さない)。
+# -DBOOTWAIT=OFF で元の動き (最初の HDS の読み込みで接続を待ち、失敗なら 0 埋め) に戻す
+option(BOOTWAIT "Answer NOT READY until the HDS is open instead of blocking / returning zeros" ON)
+if(BOOTWAIT)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BOOTWAIT=1)
+endif()
+
 # 起動時の調査用: Z からの MSC の命令を 1 件 1 行の UDP で MSC_LOG_HOST:6870 に送る (src/msclog.c)。-DMSC_LOG=ON で入れる
 option(MSC_LOG "Log USB MSC commands over UDP (boot-time investigation)" OFF)
 set(MSC_LOG_HOST "192.168.1.108" CACHE STRING "Receiver of the MSC log (UDP 6870)")

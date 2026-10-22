@@ -41,6 +41,16 @@
 #define VOLUME_SECTOR_COUNT (0x20 + FAT_SECTORS * 2 + (MAX_CLUSTER - 2) * CLUS_PER_SECT)
                                                                 // 0x4003fa0
 
+/* BOOTWAIT=1 (既定、cmake -DBOOTWAIT=OFF で外す): HDS がまだ開けていない間の読み書きに 0 埋めの成功ではなく
+   NOT READY を返す (msc_disk.c)。Z の Linux は失敗した読み込みをキャッシュせず、04/01 なら待って出し直す */
+#ifndef BOOTWAIT
+#define BOOTWAIT 0
+#endif
+
+/* vd_read_block / vd_write_block の戻り値。-1 は従来どおり (Z には 0 埋めの成功として見せる) */
+#define VD_NOTREADY         (-2)    /* HDS がまだ開けていない: 少し待たせてから NOT READY (04/01) */
+#define VD_IOERR            (-3)    /* HDS の読み書きに失敗した / HDS が無い: MEDIUM ERROR (03/11) */
+
 /* virtual disk function prototypes */
 
 int vd_init(void);
