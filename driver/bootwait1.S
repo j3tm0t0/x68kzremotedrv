@@ -9,7 +9,7 @@
     .text
 
 BW_STAGE2   = 0x80                      /* src/bootwait_proto.h */
-V_ID        = 0x3800
+V_ID        = 0x7000
 
 entry:
     bra.w   start
@@ -18,7 +18,7 @@ entry:
 start:
     move.l  %d4,V_ID.w
     move.l  #BW_STAGE2,%d2
-    moveq.l #8,%d3                      /* 4KB */
+    moveq.l #32,%d3                     /* 16KB */
     moveq.l #6,%d4                      /* SCSI ID 6 */
     moveq.l #1,%d5
     movea.w #0x2800,%a1

@@ -77,6 +77,8 @@ bootloader.bin: bootloader.o
 hdsboot.bin: hdsboot.o
 	$(OBJCOPY) -O binary $< $@
 
+bootwait.o: bootwait_gen.S
+
 bootwait.bin: bootwait.o
 	$(OBJCOPY) -O binary $< $@
 

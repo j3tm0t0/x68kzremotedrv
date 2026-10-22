@@ -22,8 +22,8 @@
 #define BW_CHANGED      2               /* HDS の先頭が控えと違う: 電源を入れ直してもらう */
 #define BW_NOHDS        3               /* SMB にはつながったが HDS を開けない */
 
-#define BW_STAGE2       0x80            /* ID 6 の LBA: 待ち IPL の後半 (driver/bootwait.S、4KB まで。中身は変わらない) */
-#define BW_STAGE2_SECTS 8
+#define BW_STAGE2       0x80            /* ID 6 の LBA: 待ち IPL の後半 (driver/bootwait.S、16KB まで。中身は変わらない) */
+#define BW_STAGE2_SECTS 32
 
 #define BW_SNAP_SECTS   32              /* 控える HDS の先頭 (LBA 0-31、16KB: 署名・IPL・分割表・SCSI ドライバ) */
 

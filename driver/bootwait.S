@@ -1,14 +1,21 @@
 /*
- * bootwait.S -- 起動待ちの IPL (src/bootwait.c、BOOTWAIT_SCREEN)
+ * bootwait.S -- 起動待ちの IPL の後半 (src/bootwait.c、BOOTWAIT_SCREEN)
  *
- * Pico が HDS をまだ開けていないとき、HDS の LBA 2-3 (IPL) の代わりにこれを返す。ほかの LBA 0-31 は
- * 前回控えた本物なので、Z のキャッシュには本物の分割表と SCSI ドライバが入る。
- * これは後半 (SCSI ID 6 の LBA BW_STAGE2 から $2800 に読まれる)。前半 bootwait1.S が HDS の LBA 2 に入る。
- * 画面に Pico の状態を出しながら、SCSI ID 6 の BW_BAND (src/bootwait_proto.h) を毎回違う番地で読み、
- *   BW_READY   -> 返ってきた本物の IPL (1KB) を $2000 に置いて飛ぶ (ROM から来たときの d4 = SCSI ID を戻す)
+ * Pico が HDS をまだ開けていないとき、HDS の LBA 2 (IPL) の代わりに前半 bootwait1.S を返す。ほかの LBA 0-31 は
+ * 前回控えた本物なので、Z のキャッシュには本物の分割表と SCSI ドライバが入る。これは後半で、前半が
+ * SCSI ID 6 の LBA BW_STAGE2 から $2800 に読む (16KB まで。中身は変わらないのでキャッシュされて構わない)。
+ *
+ * 画面: 枠 (罫線)、紋章 (テキスト VRAM のプレーン 2・3 に直接描く絵)、Wi-Fi / SMB / HDS / 経過の欄、
+ * Pico から Z へ ◆ が走る行、反転の案内。文字列・紋章・配置は mkbootwait.py が作る bootwait_gen.S。
+ * 0.5 秒ごとに ID 6 の BW_BAND (src/bootwait_proto.h) を毎回違う番地で読み、
+ *   BW_READY   -> 画面を元に戻し (パレット・プレーン 2-3・カーソル)、本物の IPL (1KB) を $2000 に置いて飛ぶ
+ *                 (ROM から来たときの d4 = SCSI ID を戻す)
  *   BW_CHANGED -> 「電源を入れ直してください」と出して止まる
- *   それ以外   -> 状態を出して 0.5 秒後にもう一度
- * S (か F1) を押すと設定画面 (hdsboot.S の F1 と同じ settingui を ID 6 から読む)。
+ *   それ以外   -> 欄を書き直す
+ * S か F1 で設定画面 (hdsboot.S の F1 と同じ settingui を ID 6 から読む。画面は元に戻してから)。
+ *
+ * 書き直す欄は毎回 ESC[y;xH で位置を決め、決まった幅まで空白で埋める。描く前に CRTC R21 (同時アクセス) と
+ * R23 (ビットマスク) に 0 を書く (設定画面から戻ると残っていて、書き直した字が前の字と重なった)。
  * Unicorn (ホスト試験) は movem を扱えないので使わない。
  */
 
@@ -18,34 +25,57 @@ BW_BAND     = 0x40000
 BW_SLOTS    = 12288
 BW_STRIDE_SHIFT = 6                     /* 64 セクタ */
 
-V_ID        = 0x3800                    /* ROM から来たときの d4 (前半が置く) */
-V_T0        = 0x3804                    /* 始めた時刻 (1/100 秒) */
-V_LAST      = 0x3808                    /* 最後に問い合わせた時刻 */
-V_UP        = 0x380c                    /* 最後に受け取った Pico の起動からの ms */
-V_SPIN      = 0x3810
-V_UP0       = 0x3814                    /* 最初に受け取った Pico の起動からの ms (経過秒の起点) */
-LINE        = 0x3900                    /* 表示する行を組み立てる */
-ANIM_LEN    = 24
-LINE_END    = LINE+95                   /* 書き直す行は毎回ここまで空白で埋める (ESC[y;5H の 7 バイト + 88 桁、92 桁目まで) */
-CRTC_R21    = 0xe8002a                  /* テキストの同時アクセス・ラスタコピー */
-CRTC_R23    = 0xe8002e                  /* テキストのビットマスク */
-BUF         = 0x4000                    /* 応答 3 セクタ */
+V_ID        = 0x7000                    /* ROM から来たときの d4 (前半が置く) */
+V_LAST      = 0x7004                    /* 最後に問い合わせた時刻 (ONTIME) */
+V_UP        = 0x7008                    /* 最後に受け取った Pico の起動からの ms */
+V_UP0       = 0x700c                    /* 最初に受け取った Pico の起動からの ms (経過秒の起点) */
+V_SPIN      = 0x7010
+V_NORESP    = 0x7012
+V_PAL       = 0x7020                    /* 元のテキストパレット 16 色 */
+V_HDR       = 0x7040                    /* 最後に受け取った応答の見出し (32 バイト) */
+LINE        = 0x7100                    /* 表示する欄を組み立てる */
+BUF         = 0x7400                    /* 応答 3 セクタ */
+
+TVRAM_P2    = 0xe40000                  /* テキスト VRAM のプレーン 2・3 (紋章) */
+TVRAM_P3    = 0xe60000
+TPAL        = 0xe82200
+CRTC_R21    = 0xe8002a
+CRTC_R23    = 0xe8002e
+
+H_STATE     = 4                         /* 応答の見出し (bootwait_proto.h) */
+H_SYS       = 5
+H_IP        = 8
+H_UPTIME    = 12
+H_LBA       = 16
+H_SUM       = 20
+H_RETRY     = 24
 
 entry:
     .ascii  "BW2!"                      /* 前半が確かめる */
+
 main:
-    bsr     txreset
-    moveq.l #0x7f,%d0                   /* ONTIME */
-    trap    #15
-    move.l  %d0,V_T0.w
-    subi.l  #100,%d0
-    move.l  %d0,V_LAST.w                /* 最初はすぐ問い合わせる */
+    lea.l   V_PAL.w,%a1                 /* 元のパレットを控える */
+    lea.l   TPAL,%a0
+    moveq.l #15,%d0
+1:
+    move.w  %a0@+,%a1@+
+    dbra    %d0,1b
+    lea.l   V_HDR.w,%a0                 /* まだ何も聞いていない: 状態 0、IP なし、再接続の予定なし */
+    moveq.l #7,%d0
+2:
+    clr.l   %a0@+
+    dbra    %d0,2b
+    moveq.l #-1,%d0
+    move.l  %d0,V_HDR+H_RETRY.w
     clr.l   V_UP.w
     clr.l   V_UP0.w
     clr.w   V_SPIN.w
-    lea.l   %pc@(m_screen),%a1
-    moveq.l #0x21,%d0
+    clr.w   V_NORESP.w
+    bsr     screen_init
+    moveq.l #0x7f,%d0                   /* ONTIME */
     trap    #15
+    subi.l  #100,%d0
+    move.l  %d0,V_LAST.w                /* 最初はすぐ問い合わせる */
 
 loop:
     moveq.l #0x04,%d0                   /* B_BITSNS */
@@ -63,18 +93,16 @@ loop:
     cmpi.b  #'S',%d0
     beq     loadsetting
 1:
-
     moveq.l #0x7f,%d0                   /* ONTIME */
     trap    #15
     move.l  %d0,%d6
     sub.l   V_LAST.w,%d0
-    bpl     1f
+    bpl     2f
     neg.l   %d0                         /* 逆に進む時計でも 0.5 秒ごとに (日付の変わり目はすぐ問い合わせる) */
-1:
+2:
     cmpi.l  #50,%d0
     blt     loop
 
-poll:
     move.l  %d6,V_LAST.w
     move.l  %d6,%d0                     /* 番地 = BW_BAND + ((時刻 >> 5) mod BW_SLOTS) * 64 */
     lsr.l   #5,%d0
@@ -89,146 +117,63 @@ poll:
     moveq.l #6,%d4                      /* SCSI ID 6 */
     moveq.l #1,%d5
     movea.w #BUF,%a1
-    move.l  #0xf5,%d0
-    moveq.l #0x26,%d1
+    move.l  #0xf5,%d0                   /* SCSIDRV */
+    moveq.l #0x26,%d1                   /* S_READEXT */
     trap    #15
     tst.l   %d0
     bne     noresp
     movea.w #BUF,%a0
     cmpi.l  #0x58364257,%a0@            /* "X6BW" */
     bne     noresp
-    cmp.l   %a0@(16),%d7                /* 読んだ番地の答えか */
+    cmp.l   %a0@(H_LBA),%d7             /* 読んだ番地の答えか */
     bne     noresp
-    move.l  %a0@(12),%d0
+    move.l  %a0@(H_UPTIME),%d0
     cmp.l   V_UP.w,%d0
     bcs     loop                        /* 前に読んだものより古い (キャッシュ): 見ない */
     move.l  %d0,V_UP.w
     tst.l   V_UP0.w
-    bne     7f
+    bne     3f
     move.l  %d0,V_UP0.w
-7:
-    move.b  %a0@(4),%d0
+3:
+    clr.w   V_NORESP.w
+    lea.l   V_HDR.w,%a1                 /* 見出しを控える (読めなかったときも前の状態を出す) */
+    moveq.l #7,%d0
+4:
+    move.l  %a0@+,%a1@+
+    dbra    %d0,4b
+    move.b  V_HDR+H_STATE.w,%d0
     cmpi.b  #1,%d0
     beq     ready
     cmpi.b  #2,%d0
     beq     changed
-    lea.l   %pc@(m_nohds),%a2
-    cmpi.b  #3,%d0
-    beq     show
-    moveq.l #0,%d0                      /* 待ち: sysstatus で言い分ける */
-    move.b  %a0@(5),%d0
-    cmpi.b  #4,%d0
-    bls     1f
-    moveq.l #4,%d0
-1:
-    add.w   %d0,%d0
-    lea.l   %pc@(t_stat),%a2
-    adda.w  %a2@(%d0.w),%a2
-    bra     show
+    bra     redraw
 
 noresp:
-    clr.l   BUF+8.w                     /* IP と再接続の予定は出さない */
-    moveq.l #-1,%d0
-    move.l  %d0,BUF+24.w
-    lea.l   %pc@(m_noresp),%a2
+    move.w  #1,V_NORESP.w
 
-show:                                   /* a2 の文言 + IP + 経過秒 + くるくる */
-    movea.w #LINE,%a3
-    lea.l   %pc@(e_row2),%a4
-    bsr     copystr
-    movea.l %a2,%a4
-    bsr     copystr
-    move.l  BUF+8.w,%d6
-    beq     2f
-    lea.l   %pc@(m_ip),%a4
-    bsr     copystr
-    moveq.l #3,%d5
-1:
-    rol.l   #8,%d6
-    moveq.l #0,%d0
-    move.b  %d6,%d0
-    bsr     putdec
-    move.b  #'.',%a3@+
-    dbra    %d5,1b
-    subq.l  #1,%a3                      /* 最後の '.' */
-2:
-    lea.l   %pc@(m_elapsed),%a4         /* 経過秒は Pico の時計で数える (Z の ONTIME は使わない) */
-    bsr     copystr
-    move.l  V_UP.w,%d0
-    sub.l   V_UP0.w,%d0
-    bsr     putsec
-    lea.l   %pc@(m_sec),%a4
-    bsr     copystr
-    movea.w #BUF,%a0
-    move.l  %a0@(24),%d0                /* 次の再接続までの ms (0: 試している最中、-1: 予定なし) */
-    cmpi.l  #-1,%d0
-    beq     8f
-    lea.l   %pc@(m_trying),%a4
-    tst.l   %d0
-    beq     9f
-    lea.l   %pc@(m_next),%a4
-    bsr     copystr
-    addi.l  #999,%d0
-    bsr     putsec
-    lea.l   %pc@(m_secp),%a4
-9:
-    bsr     copystr
-8:
-    move.b  #' ',%a3@+
-    move.w  V_SPIN.w,%d0
-    addq.w  #1,V_SPIN.w
-    andi.w  #3,%d0
-    lea.l   %pc@(m_spin),%a4
-    move.b  %a4@(%d0.w),%a3@+
-    bsr     padto
-    bsr     print
-                                        /* [Pico W] .....o........ [X68000 Z] */
-    movea.w #LINE,%a3
-    lea.l   %pc@(m_anim1),%a4
-    bsr     copystr
-    moveq.l #0,%d0
-    move.w  V_SPIN.w,%d0
-    divu.w  #ANIM_LEN,%d0
-    swap    %d0                         /* 光る位置 p */
-    neg.w   %d0
-    addi.w  #ANIM_LEN-1,%d0             /* dbra は数え下げなので ANIM_LEN-1-p で比べる */
-    moveq.l #ANIM_LEN-1,%d1
-5:
-    moveq.l #'.',%d2
-    cmp.w   %d0,%d1
-    bne     6f
-    moveq.l #'o',%d2
-6:
-    move.b  %d2,%a3@+
-    dbra    %d1,5b
-    lea.l   %pc@(m_anim2),%a4
-    bsr     copystr
-    bsr     padto
-    bsr     print
+redraw:
+    bsr     draw_status
+    bsr     draw_track
     bra     loop
 
 changed:
-    movea.w #LINE,%a3
-    lea.l   %pc@(e_row2),%a4
-    bsr     copystr
+    bsr     draw_status
     lea.l   %pc@(m_changed),%a4
-    bsr     copystr
-    bsr     padto
-    bsr     print
+    moveq.l #C_WARN+8,%d6               /* 反転の黄 */
+    bsr     draw_msg
+halt:
     bra     halt
 
-ready:                                  /* IPL の和を確かめてから $2000 に写して飛ぶ (ここは $2800 から上) */
+ready:                                  /* IPL の和を確かめてから画面を戻し、$2000 に写して飛ぶ */
     movea.w #BUF+512,%a1
     move.w  #255,%d1
     moveq.l #0,%d0
 1:
     add.l   %a1@+,%d0
     dbra    %d1,1b
-    cmp.l   %a0@(20),%d0
+    cmp.l   V_HDR+H_SUM.w,%d0
     bne     noresp
-    lea.l   %pc@(e_clear),%a1
-    moveq.l #0x21,%d0
-    trap    #15
+    bsr     screen_restore
     movea.w #BUF+512,%a0
     movea.w #0x2000,%a1
     move.w  #255,%d0
@@ -238,76 +183,8 @@ ready:                                  /* IPL の和を確かめてから $2000
     move.l  V_ID.w,%d4
     jmp     0x2000.w
 
-halt:
-    bra     halt
-
-/* a4 の文字列 (0 終わり) を a3 に足す */
-copystr:
-    move.b  %a4@+,%d0
-    beq     1f
-    move.b  %d0,%a3@+
-    bra     copystr
-1:
-    rts
-
-/* d0 (ms) を秒にして a3 に足す */
-putsec:
-    cmpi.l  #65535000,%d0
-    bcs     1f
-    move.l  #65535000,%d0
-1:
-    divu.w  #1000,%d0
-    andi.l  #0xffff,%d0
-    bra     putdec
-
-/* d0 (0-65535) を 10 進で a3 に足す */
-putdec:
-    moveq.l #0,%d1
-1:
-    divu.w  #10,%d0
-    swap    %d0
-    addi.w  #'0',%d0
-    move.w  %d0,-(%sp)
-    addq.w  #1,%d1
-    clr.w   %d0
-    swap    %d0
-    tst.w   %d0
-    bne     1b
-2:
-    move.w  (%sp)+,%d0
-    move.b  %d0,%a3@+
-    subq.w  #1,%d1
-    bne     2b
-    rts
-
-/* 行の残りを LINE_END まで空白で埋める (前に書いたものを必ず消す) */
-padto:
-    cmpa.w  #LINE_END,%a3
-    bcc     1f
-    move.b  #' ',%a3@+
-    bra     padto
-1:
-    rts
-
-print:
-    bsr     txreset
-    clr.b   %a3@
-    movea.w #LINE,%a1
-    moveq.l #0x21,%d0
-    trap    #15
-    rts
-
-/* 設定画面 (IOCS の TXBOX など) が残したテキストの同時アクセスとビットマスクを戻す。残っていると
-   書き直した文字が前の文字と重なって見える (実機で状態行がそうなった) */
-txreset:                                /* clr は先に読むので move で書く (R21 は読まない) */
-    move.w  #0,CRTC_R21
-    move.w  #0,CRTC_R23
-    rts
-
-loadsetting:                            /* hdsboot.S と同じ: ID 6 の設定メニューを読んで飛ぶ */
-    lea.l   %pc@(e_clear),%a1
-    moveq.l #0x21,%d0
-    trap    #15
+loadsetting:                            /* hdsboot.S と同じ: ID 6 の設定画面を読んで飛ぶ (画面は戻してから) */
+    bsr     screen_restore
     move.l  #(0x20000/512),%d2
     moveq.l #6,%d4
     moveq.l #1,%d3
@@ -341,91 +218,337 @@ loadsetting:                            /* hdsboot.S と同じ: ID 6 の設定�
     movea.l 0x67c8.w,%a0
     jmp     %a0@
 
-t_stat:                                 /* sysstatus 0-4 */
-    .word   m_wifi0-t_stat, m_wifi1-t_stat, m_smb0-t_stat, m_smb1-t_stat, m_hds-t_stat
+/****************************************************************************
+ * 画面
+ ****************************************************************************/
 
-m_screen:
-    .byte   0x1b
-    .ascii  "[2J"
-    .byte   0x1b
-    .ascii  "[2;13H+---------------------------------------------------------------------+"
-    .byte   0x1b
-    .ascii  "[3;13H|  #     #    ####    #####    #####    #####    #####       #######  |"
-    .byte   0x1b
-    .ascii  "[4;13H|   #   #    #       #     #  #    ##  #    ##  #    ##           #   |"
-    .byte   0x1b
-    .ascii  "[5;13H|    # #    #        #     #  #   # #  #   # #  #   # #          #    |"
-    .byte   0x1b
-    .ascii  "[6;13H|     #     ######    #####   #  #  #  #  #  #  #  #  #         #     |"
-    .byte   0x1b
-    .ascii  "[7;13H|    # #    #     #  #     #  # #   #  # #   #  # #   #        #      |"
-    .byte   0x1b
-    .ascii  "[8;13H|   #   #   #     #  #     #  ##    #  ##    #  ##    #       #       |"
-    .byte   0x1b
-    .ascii  "[9;13H|  #     #   #####    #####    #####    #####    #####       #######  |"
-    .byte   0x1b
-    .ascii  "[10;13H+---------------------------------------------------------------------+"
-    .byte   0x1b
-    .ascii  "[11;27H-- Raspberry Pi Pico W / x68kzremotedrv --"
-    .byte   0x1b
-    .ascii  "[13;5H"
-    /* Pico: SMB 接続待ち… (Wi-Fi/SMB を確認してください) */
-    .byte   0x50,0x69,0x63,0x6f,0x3a,0x20,0x53,0x4d,0x42,0x20,0x90,0xda,0x91,0xb1,0x91,0xd2,0x82,0xbf,0x81,0x63,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x2f,0x53,0x4d,0x42,0x20,0x82,0xf0,0x8a,0x6d,0x94,0x46,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2,0x29
-    .byte   0x1b
-    .ascii  "[19;5H"
-    /* [S] 設定画面 (Wi-Fi / SMB / HDS)   ([F1] でも入れます) */
-    .byte   0x5b,0x53,0x5d,0x20,0x90,0xdd,0x92,0xe8,0x89,0xe6,0x96,0xca,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x20,0x2f,0x20,0x53,0x4d,0x42,0x20,0x2f,0x20,0x48,0x44,0x53,0x29,0x20,0x20,0x20,0x28,0x5b,0x46,0x31,0x5d,0x20,0x82,0xc5,0x82,0xe0,0x93,0xfc,0x82,0xea,0x82,0xdc,0x82,0xb7,0x29
-    .byte   0x1b
-    .ascii  "[21;5H"
-    /* ※ 設定で HDS を変えたら、Z の電源を入れ直してください */
-    .byte   0x81,0xa6,0x20,0x90,0xdd,0x92,0xe8,0x82,0xc5,0x20,0x48,0x44,0x53,0x20,0x82,0xf0,0x95,0xcf,0x82,0xa6,0x82,0xbd,0x82,0xe7,0x81,0x41,0x5a,0x20,0x82,0xcc,0x93,0x64,0x8c,0xb9,0x82,0xf0,0x93,0xfc,0x82,0xea,0x92,0xbc,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2
+/* 画面を作る: パレット、カーソルを消す、消去、紋章、枠と動かない文字 */
+screen_init:
+    bsr     txreset
+    lea.l   %pc@(pal_set),%a0
+1:
+    move.w  %a0@+,%d0
+    cmpi.w  #0xffff,%d0
+    beq     2f
+    lea.l   TPAL,%a1
+    move.w  %a0@+,%a1@(%d0.w)
+    bra     1b
+2:
+    moveq.l #0x1f,%d0                   /* B_CUROFF */
+    trap    #15
+    moveq.l #C_TEXT,%d6
+    lea.l   %pc@(s_cls),%a1
+    bsr     cprint
+    bsr     clear_art
+    lea.l   %pc@(art_p2),%a0
+    lea.l   TVRAM_P2+ART_OFF,%a1
+    bsr     blit
+    lea.l   %pc@(art_p3),%a0
+    lea.l   TVRAM_P3+ART_OFF,%a1
+    bsr     blit
+    moveq.l #C_DIM,%d6
+    lea.l   %pc@(s_frame),%a1
+    bsr     cprint
+    lea.l   %pc@(s_sub),%a1
+    bsr     cprint
+    moveq.l #C_TEXT,%d6
+    lea.l   %pc@(s_title),%a1
+    bsr     cprint
+    lea.l   %pc@(s_labels),%a1
+    bsr     cprint
+    lea.l   %pc@(s_trk_l),%a1
+    bsr     cprint
+    lea.l   %pc@(s_trk_r),%a1
+    bsr     cprint
+    moveq.l #C_BAR,%d6
+    lea.l   %pc@(s_bar),%a1
+    bsr     cprint
+    rts
+
+/* 本物の IPL・設定画面に渡す前に戻す: プレーン 2-3、パレット、色、消去、カーソル */
+screen_restore:
+    bsr     txreset
+    bsr     clear_art
+    lea.l   V_PAL.w,%a0
+    lea.l   TPAL,%a1
+    moveq.l #15,%d0
+1:
+    move.w  %a0@+,%a1@+
+    dbra    %d0,1b
+    moveq.l #C_TEXT,%d6
+    lea.l   %pc@(s_cls),%a1
+    bsr     cprint
+    moveq.l #0x1e,%d0                   /* B_CURON */
+    trap    #15
+    rts
+
+/* プレーン 2・3 の見えるところ (512 ラスタ) を消す */
+clear_art:
+    lea.l   TVRAM_P2,%a0
+    bsr     1f
+    lea.l   TVRAM_P3,%a0
+1:
+    move.w  #512*128/4-1,%d0
+2:
+    clr.l   %a0@+
+    dbra    %d0,2b
+    rts
+
+/* a0 の絵 (ART_WB バイト x ART_H ラスタ) を a1 のテキスト VRAM に (1 ラスタ = 128 バイト) */
+blit:
+    move.w  #ART_H-1,%d1
+1:
+    movea.l %a1,%a2
+    move.w  #ART_WB-1,%d0
+2:
+    move.b  %a0@+,%a2@+
+    dbra    %d0,2b
+    lea.l   %a1@(128),%a1
+    dbra    %d1,1b
+    rts
+
+/* 欄を書き直す: Wi-Fi・SMB・HDS・経過・IP・再接続・知らせ */
+draw_status:
+    moveq.l #0,%d2
+    move.b  V_HDR+H_SYS.w,%d2           /* sysstatus */
+    /* Wi-Fi: 0 未接続 / 1 接続中 / 2 以上 接続済み */
+    lea.l   %pc@(e_wifi),%a1
+    lea.l   %pc@(v_wifi0),%a4
+    moveq.l #C_WARN,%d6
+    tst.b   %d2
+    beq     1f
+    lea.l   %pc@(v_wifi1),%a4
+    cmpi.b  #1,%d2
+    beq     1f
+    lea.l   %pc@(v_wifi2),%a4
+    moveq.l #C_DIM,%d6
+1:
+    bsr     field
+    /* SMB: 2 未満 ― / 2 接続待ち / 3 接続中 / 4 以上 接続済み */
+    lea.l   %pc@(e_smb),%a1
+    lea.l   %pc@(v_smb0),%a4
+    moveq.l #C_DIM,%d6
+    cmpi.b  #2,%d2
+    bcs     2f
+    lea.l   %pc@(v_smb1),%a4
+    moveq.l #C_WARN,%d6
+    cmpi.b  #2,%d2
+    beq     2f
+    lea.l   %pc@(v_smb2),%a4
+    cmpi.b  #3,%d2
+    beq     2f
+    lea.l   %pc@(v_smb3),%a4
+    moveq.l #C_DIM,%d6
+2:
+    bsr     field
+    /* HDS: 開けた / 開けない / sysstatus 4 以上 開いています / 待っています */
+    lea.l   %pc@(e_hds),%a1
+    lea.l   %pc@(v_hds3),%a4
+    moveq.l #C_DIM,%d6
+    move.b  V_HDR+H_STATE.w,%d0
+    cmpi.b  #1,%d0
+    beq     3f
+    lea.l   %pc@(v_hds2),%a4
+    moveq.l #C_WARN,%d6
+    cmpi.b  #3,%d0
+    beq     3f
+    lea.l   %pc@(v_hds1),%a4
+    cmpi.b  #4,%d2
+    bcc     3f
+    lea.l   %pc@(v_hds0),%a4
+3:
+    bsr     field
+    /* 経過 N 秒 (Pico の時計で数える) */
+    movea.w #LINE,%a3
+    movea.l %a3,%a5
+    move.l  V_UP.w,%d0
+    sub.l   V_UP0.w,%d0
+    bsr     putsec
+    lea.l   %pc@(m_sec),%a4
+    bsr     copystr
+    moveq.l #VALUE_W,%d7
+    bsr     padw
+    lea.l   %pc@(e_time),%a1
+    moveq.l #C_TEXT,%d6
+    bsr     lprint
+    /* IP */
+    movea.w #LINE,%a3
+    movea.l %a3,%a5
+    move.l  V_HDR+H_IP.w,%d5
+    beq     4f
+    lea.l   %pc@(m_ip),%a4
+    bsr     copystr
+    moveq.l #3,%d4
+5:
+    rol.l   #8,%d5
+    moveq.l #0,%d0
+    move.b  %d5,%d0
+    bsr     putdec
+    move.b  #'.',%a3@+
+    dbra    %d4,5b
+    subq.l  #1,%a3                      /* 最後の '.' */
+4:
+    moveq.l #EXTRA_W,%d7
+    bsr     padw
+    lea.l   %pc@(e_ip),%a1
+    moveq.l #C_TEXT,%d6
+    bsr     lprint
+    /* 次の再接続まで */
+    movea.w #LINE,%a3
+    movea.l %a3,%a5
+    move.l  V_HDR+H_RETRY.w,%d0
+    cmpi.l  #-1,%d0
+    beq     6f
+    lea.l   %pc@(m_trying),%a4
+    tst.l   %d0
+    beq     7f
+    lea.l   %pc@(m_next),%a4
+    bsr     copystr
+    addi.l  #999,%d0
+    bsr     putsec
+    lea.l   %pc@(m_secp),%a4
+7:
+    bsr     copystr
+6:
+    moveq.l #EXTRA_W,%d7
+    bsr     padw
+    lea.l   %pc@(e_retry),%a1
+    moveq.l #C_TEXT,%d6
+    bsr     lprint
+    /* 知らせ */
+    lea.l   %pc@(m_none),%a4
+    moveq.l #C_TEXT,%d6
+    tst.w   V_NORESP.w
+    beq     8f
+    lea.l   %pc@(m_noresp),%a4
+    moveq.l #C_WARN,%d6
+    bra     9f
+8:
+    cmpi.b  #3,V_HDR+H_STATE.w
+    bne     9f
+    lea.l   %pc@(m_nohds),%a4
+    moveq.l #C_WARN,%d6
+9:
+    bra     draw_msg
+
+/* 知らせの行に a4 を d6 の色で (MSG_W 桁まで埋める) */
+draw_msg:
+    movea.w #LINE,%a3
+    movea.l %a3,%a5
+    bsr     copystr
+    moveq.l #MSG_W,%d7
+    bsr     padw
+    lea.l   %pc@(e_msg),%a1
+    bra     lprint
+
+/* Pico から Z へ ◆ が走る: ━ x TRACK_LEN の V_SPIN 番目を ◆ に */
+draw_track:
+    moveq.l #0,%d0
+    move.w  V_SPIN.w,%d0
+    addq.w  #1,V_SPIN.w
+    divu.w  #TRACK_LEN,%d0
+    swap    %d0
+    move.w  %d0,%d3                     /* ◆ の位置 */
+    lea.l   %pc@(e_track),%a1
+    moveq.l #C_DIM,%d6
+    bsr     cprint
+    moveq.l #0,%d4
+1:
+    lea.l   %pc@(m_rail),%a1
+    moveq.l #C_DIM,%d6
+    cmp.w   %d4,%d3
+    bne     2f
+    lea.l   %pc@(m_packet),%a1
+    moveq.l #C_WARN,%d6
+2:
+    bsr     cprint
+    addq.w  #1,%d4
+    cmpi.w  #TRACK_LEN,%d4
+    bne     1b
+    rts
+
+/* a1 (位置の ESC) を出してから LINE (a3 まで) を d6 の色で */
+lprint:
+    bsr     cprint
+    clr.b   %a3@
+    movea.w #LINE,%a1
+    bra     cprint
+
+/* a4 (欄の中身、幅はそろえてある) を a1 の位置に d6 の色で */
+field:
+    bsr     cprint
+    movea.l %a4,%a1
+
+/* a1 を d6 の色で出す */
+cprint:
+    bsr     txreset
+    move.l  %d6,%d1
+    moveq.l #0x22,%d0                   /* B_COLOR */
+    trap    #15
+    moveq.l #0x21,%d0                   /* B_PRINT */
+    trap    #15
+    rts
+
+/* 設定画面 (IOCS の TXBOX など) が残したテキストの同時アクセスとビットマスクを戻す。残っていると
+   書き直した文字が前の文字と重なって見える。clr は先に読むので move で書く (R21 は読まない) */
+txreset:
+    move.w  #0,CRTC_R21
+    move.w  #0,CRTC_R23
+    rts
+
+/* a4 の文字列 (0 終わり) を a3 に足す */
+copystr:
+    move.b  %a4@+,%d1
+    beq     1f
+    move.b  %d1,%a3@+
+    bra     copystr
+1:
+    rts
+
+/* a5 から d7 バイト (= 桁) になるまで空白で埋める */
+padw:
+    move.l  %a3,%d1
+    sub.l   %a5,%d1
+    cmp.w   %d7,%d1
+    bcc     1f
+    move.b  #' ',%a3@+
+    bra     padw
+1:
+    rts
+
+/* d0 (ms) を秒にして a3 に足す */
+putsec:
+    cmpi.l  #65535000,%d0
+    bcs     1f
+    move.l  #65535000,%d0
+1:
+    divu.w  #1000,%d0
+    andi.l  #0xffff,%d0
+
+/* d0 (0-65535) を 10 進で a3 に足す (d0, d1 を使う) */
+putdec:
+    moveq.l #0,%d1
+1:
+    divu.w  #10,%d0
+    swap    %d0
+    addi.w  #'0',%d0
+    move.w  %d0,-(%sp)
+    addq.w  #1,%d1
+    clr.w   %d0
+    swap    %d0
+    tst.w   %d0
+    bne     1b
+2:
+    move.w  (%sp)+,%d0
+    move.b  %d0,%a3@+
+    subq.w  #1,%d1
+    bne     2b
+    rts
+
+m_none:
     .byte   0
-e_row2:
-    .byte   0x1b
-    .ascii  "[15;5H"
-    .byte   0
-m_anim1:
-    .byte   0x1b
-    .ascii  "[17;5H[Pico W] "
-    .byte   0
-m_anim2:
-    .ascii  " [X68000 Z]"
-    .byte   0
-e_clear:
-    .byte   0x1b
-    .ascii  "[2J"
-    .byte   0
-m_wifi0:    /* Wi-Fi 未接続 */
-    .byte   0x57,0x69,0x2d,0x46,0x69,0x20,0x96,0xa2,0x90,0xda,0x91,0xb1,0
-m_wifi1:    /* Wi-Fi 接続中 */
-    .byte   0x57,0x69,0x2d,0x46,0x69,0x20,0x90,0xda,0x91,0xb1,0x92,0x86,0
-m_smb0:     /* SMB 接続待ち */
-    .byte   0x53,0x4d,0x42,0x20,0x90,0xda,0x91,0xb1,0x91,0xd2,0x82,0xbf,0
-m_smb1:     /* SMB 接続中 */
-    .byte   0x53,0x4d,0x42,0x20,0x90,0xda,0x91,0xb1,0x92,0x86,0
-m_hds:      /* HDS を開いています */
-    .byte   0x48,0x44,0x53,0x20,0x82,0xf0,0x8a,0x4a,0x82,0xa2,0x82,0xc4,0x82,0xa2,0x82,0xdc,0x82,0xb7,0
-m_nohds:    /* HDS を開けません (config.txt の HDS を確認) */
-    .byte   0x48,0x44,0x53,0x20,0x82,0xf0,0x8a,0x4a,0x82,0xaf,0x82,0xdc,0x82,0xb9,0x82,0xf1,0x20,0x28,0x63,0x6f,0x6e,0x66,0x69,0x67,0x2e,0x74,0x78,0x74,0x20,0x82,0xcc,0x20,0x48,0x44,0x53,0x20,0x82,0xf0,0x8a,0x6d,0x94,0x46,0x29,0
-m_noresp:   /* Pico の応答がありません */
-    .byte   0x50,0x69,0x63,0x6f,0x20,0x82,0xcc,0x89,0x9e,0x93,0x9a,0x82,0xaa,0x82,0xa0,0x82,0xe8,0x82,0xdc,0x82,0xb9,0x82,0xf1,0
-m_changed:  /* HDS が変わりました。Z の電源を入れ直してください */
-    .byte   0x48,0x44,0x53,0x20,0x82,0xaa,0x95,0xcf,0x82,0xed,0x82,0xe8,0x82,0xdc,0x82,0xb5,0x82,0xbd,0x81,0x42,0x5a,0x20,0x82,0xcc,0x93,0x64,0x8c,0xb9,0x82,0xf0,0x93,0xfc,0x82,0xea,0x92,0xbc,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2,0
-m_ip:
-    .ascii  "  IP "
-    .byte   0
-m_sec:      /* 秒 */
-    .byte   0x20,0x95,0x62,0
-m_elapsed:  /* 経過 */
-    .byte   0x20,0x20,0x8c,0x6f,0x89,0xdf,0x20,0
-m_trying:   /*   (接続を試しています) */
-    .byte   0x20,0x20,0x28,0x90,0xda,0x91,0xb1,0x82,0xf0,0x8e,0x8e,0x82,0xb5,0x82,0xc4,0x82,0xa2,0x82,0xdc,0x82,0xb7,0x29,0
-m_next:     /*   (次の再接続まで */
-    .byte   0x20,0x20,0x28,0x8e,0x9f,0x82,0xcc,0x8d,0xc4,0x90,0xda,0x91,0xb1,0x82,0xdc,0x82,0xc5,0x20,0
-m_secp:     /*  秒) */
-    .byte   0x20,0x95,0x62,0x29,0
-m_spin:
-    .ascii  ".oOo"                      /* \ は X68k では円記号なので使わない */
     .even
+
+#include "bootwait_gen.S"
 
     .end

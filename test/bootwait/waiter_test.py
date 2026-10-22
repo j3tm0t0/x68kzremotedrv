@@ -11,8 +11,15 @@ from unicorn import Uc, UC_ARCH_M68K, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE, UcError
 from unicorn.m68k_const import *
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(HERE, '..', '..', 'driver'))
+import mkbootwait as G                                  # 配置と紋章 (bootwait_gen.S と同じものを作る)
+ROM_PAL = [0x0000, 0xf83e, 0xffc0, 0xfffe, 0xde6c, 0x4022, 0x0f80, 0xf83f,
+           0x0001, 0x003e, 0x07c0, 0x07fe, 0xf800, 0xf83e, 0xffc0, 0xfffe]   # 試験の「元のパレット」 (何でもよい)
+TVRAM, TPAL = 0xe00000, 0xe82200
 LIB = os.path.join(HERE, 'libbw.dylib')
 BW_BAND, BW_BAND_END, BW_STRIDE, BW_STAGE2 = 0x40000, 0x100000, 64, 0x80
+PREVIEW = os.environ.get('BW_PREVIEW', os.path.join(HERE, 'waiter_preview.png'))
 FLASH_SIZE = 4096 + 32 * 512
 PATH = b'//raspi3/x68000z/x68kcli.hds'
 SIZE = 104890368
@@ -89,7 +96,7 @@ class Pico:
 
     def id6(self, lba, uptime):
         b = (ctypes.c_uint8 * 512)()
-        if BW_STAGE2 <= lba < BW_STAGE2 + 8:
+        if BW_STAGE2 <= lba < BW_STAGE2 + 32:
             self.lib.bw_stage2_read(lba, b)
         elif BW_BAND <= lba < BW_BAND_END:
             self.lib.bw_reply(lba, b, self.hds_open, self.sysstat, IP if self.sysstat >= 2 else 0, uptime,
@@ -99,6 +106,85 @@ class Pico:
 
     def state(self):
         return self.lib.bw_state(PATH).decode()
+
+
+class Screen:
+    """IOCS の画面 (96 桁 x 32 行) の真似: ESC[2J、ESC[y;xH、Shift_JIS の全角は 2 桁"""
+
+    def __init__(self):
+        self.clear()
+        self.attr = 3
+        self.cur = 0
+
+    def clear(self):
+        self.cell = [[(' ', 3)] * 96 for _ in range(32)]
+        self.x = self.y = 0
+
+    def put(self, data):
+        i = 0
+        while i < len(data):
+            c = data[i]
+            if c == 0x1b:
+                m = re.match(rb'\[(\d*)(?:;(\d*))?([A-Za-z])', data[i + 1:])
+                if m.group(3) == b'J':
+                    self.clear()
+                elif m.group(3) == b'H':
+                    self.y, self.x = int(m.group(1)) - 1, int(m.group(2)) - 1
+                i += 1 + m.end()
+                continue
+            if 0x81 <= c <= 0x9f or 0xe0 <= c <= 0xfc:
+                ch, w = data[i:i + 2].decode('cp932'), 2
+                i += 2
+            else:
+                ch, w = chr(c), 1
+                i += 1
+            if self.y < 32 and self.x + w <= 96:
+                self.cell[self.y][self.x] = (ch, self.attr)
+                if w == 2:
+                    self.cell[self.y][self.x + 1] = ('', self.attr)
+            self.x += w
+
+    def row(self, r):
+        """1 桁 1 文字の文字列 (全角の右半分は '\\0')。桁で切り出せる"""
+        return ''.join(ch or '\0' for ch, a in self.cell[r - 1])
+
+    def attr_at(self, r, c):
+        return self.cell[r - 1][c - 1][1]
+
+
+def render(z, path):
+    """テキスト (IOCS の画面の真似) と紋章 (テキスト VRAM のプレーン 2・3) をパレットどおりに PNG に"""
+    from PIL import Image, ImageDraw, ImageFont
+    pal = [struct.unpack('>H', bytes(z.uc.mem_read(TPAL + i * 2, 2)))[0] for i in range(16)]
+    rgb = [(((v >> 6) & 31) * 255 // 31, ((v >> 11) & 31) * 255 // 31, ((v >> 1) & 31) * 255 // 31) for v in pal]
+    img = Image.new('RGB', (768, 512), rgb[0])
+    px = img.load()
+    p2 = bytes(z.uc.mem_read(TVRAM + 0x40000, 512 * 128))
+    p3 = bytes(z.uc.mem_read(TVRAM + 0x60000, 512 * 128))
+    for y in range(512):
+        for xb in range(96):
+            a, b = p2[y * 128 + xb], p3[y * 128 + xb]
+            if a | b:
+                for k in range(8):
+                    v = ((a >> (7 - k)) & 1) * 4 + ((b >> (7 - k)) & 1) * 8
+                    if v:
+                        px[xb * 8 + k, y] = rgb[v]
+    d = ImageDraw.Draw(img)
+    fa = ImageFont.truetype('/System/Library/Fonts/Menlo.ttc', 13)
+    fj = ImageFont.truetype('/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc', 15)
+    for r in range(32):
+        for c in range(96):
+            ch, at = z.scr.cell[r][c]
+            if ch == '':
+                continue
+            fg = rgb[at & 3]
+            wide = len(ch.encode('cp932')) == 2
+            if at & 8:
+                d.rectangle([c * 8, r * 16, c * 8 + (16 if wide else 8) - 1, r * 16 + 15], fill=fg)
+                fg = rgb[0]
+            if ch != ' ':
+                d.text((c * 8, r * 16 + (0 if wide else 1)), ch, fill=fg, font=fj if wide else fa)
+    img.resize((1536, 1152), Image.LANCZOS).save(path)
 
 
 class Z:
@@ -121,7 +207,12 @@ class Z:
         u = self.uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
         u.ctl_set_cpu_model(UC_CPU_M68K_M68000)
         u.mem_map(0, 0x100000)
-        u.mem_map(0xe80000, 0x1000)                 # CRTC
+        u.mem_map(0xe00000, 0x80000)                # テキスト VRAM
+        u.mem_map(0xe80000, 0x4000)                 # CRTC とパレット
+        u.mem_write(TPAL, struct.pack('>16H', *ROM_PAL))
+        self.scr = Screen()
+        self.snaps = []
+        self.on_snap = None
         u.mem_write(0xe8002a, b'\x01\xf0')         # 設定画面が残した同時アクセスとビットマスクの真似
         u.mem_write(0xe8002e, b'\xff\xff')
         self.dirty_prints = 0
@@ -157,6 +248,11 @@ class Z:
             k = self.key_at
             u.reg_write(D[0], k[1] if k else 0)
             self.key_at = None
+        elif fn == 0x22:                            # B_COLOR
+            u.reg_write(D[0], self.scr.attr)
+            self.scr.attr = d[1] & 0xffff
+        elif fn in (0x1e, 0x1f):                    # B_CURON / B_CUROFF
+            self.scr.cur = fn == 0x1e
         elif fn == 0x21:                            # B_PRINT
             s = bytearray()
             p = a[1]
@@ -167,6 +263,7 @@ class Z:
                 s.append(c)
                 p += 1
             self.screen.append(bytes(s).decode('cp932', 'replace'))
+            self.scr.put(bytes(s))
             if u.mem_read(0xe8002a, 2) != b'\0\0' or u.mem_read(0xe8002e, 2) != b'\0\0':
                 self.dirty_prints += 1
         elif fn == 0x7f:                            # ONTIME
@@ -177,6 +274,9 @@ class Z:
         elif fn == 0xf5 and (d[1] & 0xff) == 0x26:  # SCSIDRV S_READEXT
             lba, n, sid, buf = d[2], d[3], d[4] & 7, a[1]
             if sid == 6 and BW_BAND <= lba < BW_BAND_END:
+                self.snaps.append([self.scr.row(r) for r in range(1, 33)])   # 前の回に描いたもの
+                if self.on_snap:
+                    self.on_snap(self, len(self.polls) + 1)
                 self.polls.append(lba)
                 self.poll_clock.append(self.clock)
                 self.on_poll(self, len(self.polls))
@@ -194,6 +294,7 @@ class Z:
             u.reg_write(D[0], 0)
         elif fn == 0xff:                            # 試験の終わり (偽の IPL / 設定メニュー)
             self.result = ('jumped', u.reg_read(UC_M68K_REG_PC), d[7] & 0xff, d[4])
+            self.at_jump = self.restored()
         else:
             raise RuntimeError('IOCS %#x' % fn)
 
@@ -218,7 +319,7 @@ class Z:
             pc = u.reg_read(UC_M68K_REG_PC)
             if not self.trap:
                 idle += 1
-                if idle > 3:                        # IOCS を呼ばずに回り続けている = 止まった
+                if idle > 30:                       # IOCS を呼ばずに 60 万命令 = 止まった (画面の消去は 6 万命令ほど)
                     self.result = ('halted', pc)
                     return self.result
                 continue
@@ -229,6 +330,15 @@ class Z:
             pc += 2
         self.result = ('timeout', pc)
         return self.result
+
+    def restored(self):
+        """本物の IPL / 設定画面に渡すときの画面: プレーン 2・3 が空、パレットが元どおり、カーソル表示、色 3、消去済み"""
+        u = self.uc
+        p23 = bytes(u.mem_read(TVRAM + 0x40000, 512 * 128)) + bytes(u.mem_read(TVRAM + 0x60000, 512 * 128))
+        pal = list(struct.unpack('>16H', bytes(u.mem_read(TPAL, 32))))
+        blank = all(self.scr.row(r).strip() == '' for r in range(1, 33))
+        return {'planes': not any(p23), 'palette': pal == ROM_PAL, 'cursor': self.scr.cur,
+                'color': self.scr.attr == 3, 'blank': blank}
 
     def text(self):
         return '\n'.join(self.screen)
@@ -271,30 +381,65 @@ def scenario_wait_then_ready(fl):
             p.hds_open = 1
 
     z = Z(p, on_poll)
+    z.art_ok = z.pal_ok = z.cur_off = False
+    z.bar_attr = 0
+
+    def on_snap(zz, n):
+        if n == 8:                                  # 待っている最中の画面を確かめて PNG にする
+            W_, H_, a2, a3 = G.art()
+            off = (G.ART_ROW - 1) * 16 * 128 + (768 - W_) // 2 // 8
+            ok = True
+            for y in range(H_):
+                for pl, im in ((0x40000, a2), (0x60000, a3)):
+                    row = bytes(zz.uc.mem_read(TVRAM + pl + off + y * 128, W_ // 8))
+                    ok &= row == im.tobytes()[y * W_ // 8:(y + 1) * W_ // 8]
+            zz.art_ok = ok
+            pal = struct.unpack('>16H', bytes(zz.uc.mem_read(TPAL, 32)))
+            zz.pal_ok = all(pal[i] == G.grb(*c) for i, c in G.PALETTE.items())
+            zz.cur_off = not zz.scr.cur
+            zz.bar_attr = max(zz.scr.attr_at(G.ROW_BAR, c) for c in range(1, 97))
+            render(zz, PREVIEW)
+    z.on_snap = on_snap
     r = z.boot()
     check(z.read(0, 0)[:8] == b'X68SCSI1' and z.read(0, 4)[:4] == b'X68K', 'served LBA 0/4 from the snapshot')
     check(z.read(0, 2)[:2] == b'\x60\x00', 'LBA 2 is the waiter (bra.w)')
     check(r[0] == 'jumped' and r[1] == 0x2004 and r[2] == 0x55, 'chain-loaded the real IPL at $2000 (%r)' % (r,))
     check(r[0] == 'jumped' and r[3] == 0, 'd4 (SCSI ID from the ROM) restored to 0')
     t = z.text()
-    check('Pico: SMB 接続待ち' in t, 'title shown')
+    S = z.snaps
+    rows = lambda r: [sn[r - 1] for sn in S]
+    T = lambda x: x.replace('\0', '')
+    check('\\' not in t, 'no backslash printed (a yen sign on the X68k)')
     check(z.dirty_prints == 0, 'CRTC R21/R23 cleared before every print (%d dirty)' % z.dirty_prints)
-    redraw = [l for l in z.screen if l.startswith('\x1b[15;5H') or l.startswith('\x1b[17;5H')]
-    check(redraw and all(len(l.encode('cp932')) == 95 for l in redraw), 'status/animation lines always padded to the same width')
-    check('\x1b[19;5H[S]' in t and '\x1b[21;5H' in t, 'blank row between the [S] and ※ lines')
-    art = open(os.path.join(HERE, 'art.txt'), encoding='ascii').read().splitlines()
-    check(len(art) >= 8 and all(l in t for l in art) and '\\' not in t, 'X68000 Z banner (%d lines) shown, no backslash (a yen sign on the X68k)' % len(art))
-    secs = [int(m) for m in re.findall(r'経過 (\d+) 秒', t)]
+    last = S[-1]
+    L, W = G.FRAME_LEFT, G.FRAME_WIDTH
+    check(last[G.FRAME_TOP - 1][L - 1] == '┏' and last[G.FRAME_TOP - 1][L + W - 3] == '┓' and
+          last[G.FRAME_BOTTOM - 1][L - 1] == '┗' and all(last[r - 1][L - 1] == '┃' and last[r - 1][L + W - 3] == '┃'
+                                                       for r in range(G.FRAME_TOP + 1, G.FRAME_BOTTOM)), 'frame drawn with box characters')
+    check('Pico: SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and 'x68kzremotedrv' in last[G.ROW_SUB - 1], 'title and subtitle')
+    for r, lab in ((G.ROW_WIFI, 'Wi-Fi'), (G.ROW_SMB, 'SMB'), (G.ROW_HDS, 'HDS'), (G.ROW_TIME, '経過')):
+        check(T(last[r - 1][G.COL_LABEL - 1:]).startswith(lab), 'label %s aligned at column %d' % (lab, G.COL_LABEL))
+    val = lambda r: set(T(x[G.COL_VALUE - 1:G.COL_VALUE - 1 + G.VALUE_W]).rstrip() for x in rows(r))
+    check({'○ 未接続', '○ 接続中', '● 接続済み'} <= val(G.ROW_WIFI), 'Wi-Fi values (%s)' % val(G.ROW_WIFI))
+    check({'○ 接続待ち', '○ 接続中'} <= val(G.ROW_SMB), 'SMB values (%s)' % val(G.ROW_SMB))
+    check('○ 待っています' in val(G.ROW_HDS), 'HDS value (%s)' % val(G.ROW_HDS))
+    check(any('IP 192.168.1.118' in x for x in rows(G.ROW_WIFI)), 'IP shown once Wi-Fi is up')
+    secs = [int(m.group(1)) for x in rows(G.ROW_TIME) for m in [re.search(r'(\d+) 秒', T(x))] if m]
     check(len(secs) >= 10 and secs == sorted(secs) and secs[-1] > secs[0], 'elapsed seconds count up (%s)' % secs)
-    check('(次の再接続まで 4 秒)' in t and '(次の再接続まで 3 秒)' in t and '(接続を試しています)' in t, 'next-retry countdown and "trying" shown')
-    check('[S] 設定画面 (Wi-Fi / SMB / HDS)' in t and '電源を入れ直してください' in t, 'setup key and power-cycle note shown')
-    anim = [l for l in t.split('\n') if '[Pico W]' in l]
-    check(len(anim) >= 3 and len(set(anim)) >= 3 and all(l.split('[Pico W] ')[1][:24].count('o') == 1 for l in anim),
-          'animation line moves (%d frames)' % len(set(anim)))
-    for s in ('Wi-Fi 未接続', 'Wi-Fi 接続中', 'SMB 接続待ち', 'SMB 接続中'):
-        check(s in t, 'status "%s" shown' % s)
-    check('IP 192.168.1.118' in t, 'IP shown once Wi-Fi is up')
-    check(' 秒 ' in t and all(c in t for c in '.oO'), 'elapsed seconds and spinner shown')
+    sm = ' '.join(T(x) for x in rows(G.ROW_SMB))
+    check('(次の再接続まで 4 秒)' in sm and '(次の再接続まで 3 秒)' in sm and '(接続を試しています)' in sm, 'next-retry countdown and "trying" shown')
+    trk = rows(G.ROW_TRACK)
+    pos = [x.index('◆') for x in trk if '◆' in x]
+    check(all(x.count('◆') == 1 for x in trk[1:]) and len(set(pos)) >= 5 and '[Pico W]' in trk[-1] and '[X68000 Z]' in trk[-1],
+          'packet travels between [Pico W] and [X68000 Z] (%d positions)' % len(set(pos)))
+    bar = last[G.ROW_BAR - 1]
+    check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
+    check(z.art_ok, 'emblem bitmap in text VRAM planes 2-3 while waiting')
+    check(z.pal_ok, 'waiter palette set while waiting')
+    check(z.cur_off, 'text cursor hidden while waiting')
+    j = getattr(z, 'at_jump', {})
+    check(j and all(j.values()), 'before the real IPL: planes 2-3 clear, palette restored, cursor on, colour 3, screen cleared (%s)' % j)
+    print('     preview: %s' % PREVIEW)
     check(len(z.polls) >= 12 and len(set(z.polls)) == len(z.polls), 'every poll at a fresh LBA (%d polls)' % len(z.polls))
     check(all(BW_BAND <= l < BW_BAND_END and (l - BW_BAND) % BW_STRIDE == 0 for l in z.polls), 'polls in the band, 64-sector aligned')
     gaps = [b - a for a, b in zip(z.polls, z.polls[1:])]
@@ -398,6 +543,8 @@ def scenario_key_s(fl):
     z = Z(p, key_at=(3, 0x1f73))                   # 's' (スキャンコード 0x1f)
     r = z.boot()
     check(r[0] == 'jumped' and r[2] == 0x77 and r[3] == 6, 'S loads the setting UI from ID 6 (%r)' % (r,))
+    j = getattr(z, 'at_jump', {})
+    check(j and all(j.values()), 'before the setting UI: screen restored (%s)' % j)
 
 
 def scenario_nohds(fl):

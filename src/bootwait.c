@@ -37,6 +37,7 @@ struct bw_hdr {
 
 _Static_assert(sizeof(bootwait1) <= 512, "bootwait1.S must fit in LBA 2");
 _Static_assert(sizeof(bootwait) <= BW_STAGE2_SECTS * 512, "bootwait.S must fit in BW_STAGE2");
+_Static_assert(sizeof(bootwait) <= 0x67c0 - 0x2800, "bootwait.S ($2800-) must end below settingui ($67c0)");
 
 static int usable = -1;                 /* 控えが壊れていないか (-1: まだ見ていない) */
 static volatile bool served;            /* この USB の接続で控えを Z に返した */
