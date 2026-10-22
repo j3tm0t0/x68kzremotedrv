@@ -33,8 +33,8 @@ COL_LABEL = (96 - BLOCK_W) // 2 + 1
 COL_VALUE, COL_EXTRA = COL_LABEL + 8, COL_LABEL + 8 + VALUE_W
 MSG_W = 66                      # 知らせは状態欄の左にそろえ、枠の手前まで
 # ◆ の行: "[Pico W]" 8 + 空き 2 + 線 (全角 20 = 40 桁) + 空き 2 + "[X68000 Z]" 10 = 62 桁を中央に
-# 進み具合の行: "Wi-Fi ━━… SMB ━━… HDS ━━… 起動"。区間は全角 STAGE_SEG 文字。真ん中に
-STAGE_LABELS = ['Wi-Fi ', ' SMB ', ' HDS ', ' 起動']
+# 進み具合の行: "Wi-Fi ━━… SMB ━━… HDS ━━… BOOT"。区間は全角 STAGE_SEG 文字。真ん中に
+STAGE_LABELS = ['Wi-Fi ', ' SMB ', ' HDS ', ' BOOT']
 STAGE_SEG = 8
 RETRY_MS = 5000                 # 接続の繰り直しの間 (connect.c)。SMB の区間はこれに対する残りで埋まる
 STAGE_ROW_W = sum(len(l.encode('cp932')) for l in STAGE_LABELS) + STAGE_SEG * 2 * 3

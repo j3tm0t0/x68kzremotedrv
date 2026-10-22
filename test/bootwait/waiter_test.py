@@ -448,7 +448,7 @@ def scenario_wait_then_ready(fl):
         seg_start.append(x)
         x += G.STAGE_SEG * 2
     row_t = T(last[G.ROW_TRACK - 1][4:92]).strip()
-    check(all(l.strip() in row_t for l in G.STAGE_LABELS), 'stage row shows Wi-Fi / SMB / HDS / 起動 (%r)' % row_t)
+    check(all(l.strip() in row_t for l in G.STAGE_LABELS), 'stage row shows Wi-Fi / SMB / HDS / BOOT (%r)' % row_t)
     k = [i for i, x in enumerate(S) if '(次の再接続まで 4 秒)' in T(x[G.ROW_SMB - 1])][0]
     at, tx = z.snapattr[k][G.ROW_TRACK - 1], S[k][G.ROW_TRACK - 1]
     fill = G.STAGE_SEG - -(-3200 * G.STAGE_SEG // G.RETRY_MS)
@@ -463,7 +463,7 @@ def scenario_wait_then_ready(fl):
     check(len(wpos) >= 2, 'packet moves within the current (Wi-Fi) segment (%s)' % sorted(wpos))
     ch, ats = z.final_stage
     lit = [ats[c] for c in range(c0, c0 + G.STAGE_ROW_W) if ch[c] not in (' ', '')]
-    check(lit and set(lit) == {G.C_OK}, 'all stages lit (incl. 起動) before the hand-over')
+    check(lit and set(lit) == {G.C_OK}, 'all stages lit (incl. BOOT) before the hand-over')
     check(z.jump_ontime - z.poll_ontime >= 50, 'lit stages shown for >= 0.5 s (%d cs)' % (z.jump_ontime - z.poll_ontime))
     # 左右の釣り合い: 状態欄の塊・◆ の行・下のバーが画面 (= 枠) の中央にある
     def span(rs):
