@@ -243,18 +243,7 @@ screen_init:
     lea.l   %pc@(s_cls),%a1
     bsr     cprint
     bsr     clear_art
-    lea.l   %pc@(art_p01),%a0           /* ロゴの行には IOCS の字を出さないので 4 プレーンとも使う (0 と 1 は同じ絵) */
-    lea.l   TVRAM_P0+ART_OFF,%a1
-    bsr     blit
-    lea.l   %pc@(art_p01),%a0
-    lea.l   TVRAM_P1+ART_OFF,%a1
-    bsr     blit
-    lea.l   %pc@(art_p2),%a0
-    lea.l   TVRAM_P2+ART_OFF,%a1
-    bsr     blit
-    lea.l   %pc@(art_p3),%a0
-    lea.l   TVRAM_P3+ART_OFF,%a1
-    bsr     blit
+    bsr     draw_logo                   /* ロゴの行には IOCS の字を出さないので 4 プレーンとも使う */
     moveq.l #C_DIM,%d6
     lea.l   %pc@(s_frame),%a1
     bsr     cprint
@@ -305,17 +294,28 @@ clear_art:
     dbra    %d1,1b
     rts
 
-/* a0 の絵 (ART_WB バイト x ART_H ラスタ) を a1 のテキスト VRAM に (1 ラスタ = 128 バイト) */
-blit:
-    move.w  #ART_H-1,%d1
+/* ロゴを描く: art_blits の表 (帯 x プレーンごとの絵、bootwait_gen.S) どおりにテキスト VRAM に写す (1 ラスタ = 128 バイト) */
+draw_logo:
+    lea.l   %pc@(art_blits),%a3
 1:
-    movea.l %a1,%a2
-    move.w  #ART_WB-1,%d0
+    move.l  %a3@+,%d0                   /* VRAM の番地 */
+    beq     9f
+    movea.l %d0,%a1
+    move.w  %a3@+,%d2                   /* バイト幅 - 1 */
+    move.w  %a3@+,%d3                   /* ラスタ数 - 1 */
+    move.w  %a3@+,%d0                   /* データの位置 */
+    lea.l   %pc@(art_blits),%a0
+    adda.w  %d0,%a0
 2:
+    movea.l %a1,%a2
+    move.w  %d2,%d0
+3:
     move.b  %a0@+,%a2@+
-    dbra    %d0,2b
+    dbra    %d0,3b
     lea.l   %a1@(128),%a1
-    dbra    %d1,1b
+    dbra    %d3,2b
+    bra     1b
+9:
     rts
 
 /* 欄を書き直す: Wi-Fi・SMB・HDS・経過・IP・再接続・知らせ */

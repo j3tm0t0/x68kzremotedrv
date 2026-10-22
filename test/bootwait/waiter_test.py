@@ -419,7 +419,7 @@ def scenario_wait_then_ready(fl):
     check(last[G.FRAME_TOP - 1][L - 1] == '┏' and last[G.FRAME_TOP - 1][L + W - 3] == '┓' and
           last[G.FRAME_BOTTOM - 1][L - 1] == '┗' and all(last[r - 1][L - 1] == '┃' and last[r - 1][L + W - 3] == '┃'
                                                        for r in range(G.FRAME_TOP + 1, G.FRAME_BOTTOM)), 'frame drawn with box characters')
-    check('SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and 'Pico Z Loader' in last[G.ROW_SUB - 1], 'title and subtitle (Pico Z Loader)')
+    check('SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and 'x68kzremotedrv' in last[G.ROW_SUB - 1], 'title and subtitle')
     for r, lab in ((G.ROW_WIFI, 'Wi-Fi'), (G.ROW_SMB, 'SMB'), (G.ROW_HDS, 'HDS'), (G.ROW_TIME, '経過')):
         check(T(last[r - 1][G.COL_LABEL - 1:]).startswith(lab), 'label %s aligned at column %d' % (lab, G.COL_LABEL))
     val = lambda r: set(T(x[G.COL_VALUE - 1:G.COL_VALUE - 1 + G.VALUE_W]).rstrip() for x in rows(r))
