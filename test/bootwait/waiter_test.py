@@ -419,7 +419,7 @@ def scenario_wait_then_ready(fl):
     check(last[G.FRAME_TOP - 1][L - 1] == '┏' and last[G.FRAME_TOP - 1][L + W - 3] == '┓' and
           last[G.FRAME_BOTTOM - 1][L - 1] == '┗' and all(last[r - 1][L - 1] == '┃' and last[r - 1][L + W - 3] == '┃'
                                                        for r in range(G.FRAME_TOP + 1, G.FRAME_BOTTOM)), 'frame drawn with box characters')
-    check('SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and 'x68kzremotedrv' in last[G.ROW_SUB - 1], 'title and subtitle')
+    check('SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and last[G.ROW_SUB - 1][4:92].strip().startswith('Pico Z Loader'), 'title and subtitle (Pico Z Loader)')
     for r, lab in ((G.ROW_WIFI, 'Wi-Fi'), (G.ROW_SMB, 'SMB'), (G.ROW_HDS, 'HDS'), (G.ROW_TIME, '経過')):
         check(T(last[r - 1][G.COL_LABEL - 1:]).startswith(lab), 'label %s aligned at column %d' % (lab, G.COL_LABEL))
     val = lambda r: set(T(x[G.COL_VALUE - 1:G.COL_VALUE - 1 + G.VALUE_W]).rstrip() for x in rows(r))
@@ -452,7 +452,9 @@ def scenario_wait_then_ready(fl):
     W_, H_, pls, xb, _ = G.placed()
     ink = [x for y in range(H_) for x in range(W_) if any(p.getpixel((x, y)) for p in pls)]
     lx0, lx1 = xb * 8 + min(ink), xb * 8 + max(ink)
-    check(abs((lx0 + lx1) / 2 - 383.5) <= 8, 'logo lockup centred (x %d-%d)' % (lx0, lx1))
+    srow = last[G.ROW_SUB - 1]
+    sub_x = min(c for c in range(4, 92) if srow[c] not in ' \0') * 8      # 枠の内側で最初の字
+    check(abs(lx0 - sub_x) <= 4, 'logo left edge lines up with the subtitle (logo x %d, subtitle x %d)' % (lx0, sub_x))
     bar = last[G.ROW_BAR - 1]
     check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
     check(z.art_ok, 'logo bitmap in text VRAM planes 0-3 while waiting')
