@@ -9,6 +9,7 @@
  * (Z の 68000 では SLIP の解読と 1 バイトずつの取り出しが CPU の 2 割を超えていた):
  *   Z へ:   [長さ 2][空き 14][IP パケット][偶数にそろえる詰め物]  (空きは slip.sys が Ethernet の見出しを書く場所)
  *   Z から: [長さ 2][IP パケット][偶数にそろえる詰め物]
+ *   中身の先頭が ACCEL_MARK (0xA5) のレコードは IP ではなく暗号アクセラレータの要求 / 応答 (accel.c、accel_proto.h)。
  *
  *   ブリッジ (要求の +12 に Z の IP アドレスがあるとき):
  *     Pico が Z の IP アドレスを代わりに名乗る (Z 宛ての ARP 要求に Pico の MAC で答える)。
@@ -39,6 +40,8 @@
 #include "config_file.h"
 #include "vd_command.h"
 #include "netpipe.h"
+#include "accel_proto.h"
+#include "accel.h"
 
 #define NETPIPE_PORT    6868
 #define NETPIPE_MAGIC   0x58364e50      /* "X6NP" (big endian) */
@@ -370,7 +373,9 @@ static void bridge_out_rec(const uint8_t *s, int n)
         const uint8_t *pkt = s + 2;
         /* xip.x の詰め物 (Ethernet の最小長) があるので、全長 <= 長さ のものを全長の分だけ出す */
         int tot = len >= 20 ? (pkt[2] << 8) | pkt[3] : 0;
-        if ((pkt[0] >> 4) == 4 && tot >= 20 && tot <= len)
+        if (pkt[0] == ACCEL_MARK)
+            accel_submit(pkt, len);     /* 暗号アクセラレータの要求 (IPv4 のバージョンと重ならない) */
+        else if ((pkt[0] >> 4) == 4 && tot >= 20 && tot <= len)
             bridge_send(pkt, tot);
         s += rl;
         n -= rl;
@@ -418,6 +423,7 @@ static bool np_open(void)
         return true;
     if (sysstatus < STAT_WIFI_CONNECTED)
         return false;
+    accel_init();
     cyw43_arch_lwip_begin();
     wifi = &cyw43_state.netif[CYW43_ITF_STA];
     if (wifi_input == NULL) {
@@ -490,6 +496,14 @@ static void np_exchange(void)
         uint32_t avail = rx_head - t;
         __dmb();
         if (raw) {
+            /* 暗号アクセラレータの応答があれば先頭に載せる (最初のセクタに入る) */
+            int al = accel_result(resbuf + 16 + REC_HDR);
+            if (al > 0) {
+                resbuf[16] = al >> 8;
+                resbuf[17] = al;
+                memset(resbuf + 18, 0, REC_HDR - 2);
+                n = REC_HDR + ((al + 1) & ~1);
+            }
             /* レコードを途中で切らない */
             while (avail >= REC_HDR) {
                 int len = (rxring[t % RXRING] << 8) | rxring[(t + 1) % RXRING];

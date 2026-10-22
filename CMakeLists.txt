@@ -47,6 +47,7 @@ add_dependencies(${PROJECT_NAME} driver)
 include_directories(
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/src
+        ${CMAKE_CURRENT_LIST_DIR}/src/monocypher
         ${CMAKE_CURRENT_LIST_DIR}/include
         ${CMAKE_CURRENT_LIST_DIR}/driver
         ${CMAKE_CURRENT_LIST_DIR}/iconv
@@ -57,6 +58,19 @@ include_directories(
         ${LIBSMB2_PATH}/include/smb2
         ${LIBSMB2_PATH}/include/picow
 )
+
+# 暗号アクセラレータ (src/accel.c, Monocypher)。-DACCEL_ENABLE=0 で外す (A/B 比較用)
+option(ACCEL_ENABLE "X25519/Ed25519 accelerator for the X68000 Z over netpipe" ON)
+if(ACCEL_ENABLE)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/accel.c
+        src/accel_ops.c
+        src/monocypher/monocypher.c
+        src/monocypher/monocypher-ed25519.c
+    )
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ACCEL_ENABLE=0)
+endif()
 
 pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_enable_stdio_uart(${PROJECT_NAME} 1)
