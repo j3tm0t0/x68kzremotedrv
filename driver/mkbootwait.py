@@ -33,9 +33,12 @@ COL_LABEL = (96 - BLOCK_W) // 2 + 1
 COL_VALUE, COL_EXTRA = COL_LABEL + 8, COL_LABEL + 8 + VALUE_W
 MSG_W = 66                      # 知らせは状態欄の左にそろえ、枠の手前まで
 # ◆ の行: "[Pico W]" 8 + 空き 2 + 線 (全角 20 = 40 桁) + 空き 2 + "[X68000 Z]" 10 = 62 桁を中央に
-TRACK_LEN = 20
-TRACK_ROW_W = 8 + 2 + TRACK_LEN * 2 + 2 + 10
-TRACK_COL = (96 - TRACK_ROW_W) // 2 + 1 + 10    # 線の始まり
+# 進み具合の行: "Wi-Fi ━━… SMB ━━… HDS ━━… 起動"。区間は全角 STAGE_SEG 文字。真ん中に
+STAGE_LABELS = ['Wi-Fi ', ' SMB ', ' HDS ', ' 起動']
+STAGE_SEG = 8
+RETRY_MS = 5000                 # 接続の繰り直しの間 (connect.c)。SMB の区間はこれに対する残りで埋まる
+STAGE_ROW_W = sum(len(l.encode('cp932')) for l in STAGE_LABELS) + STAGE_SEG * 2 * 3
+STAGE_COL = (96 - STAGE_ROW_W) // 2 + 1
 
 # 文字の色 (IOCS _B_COLOR: 0-3 が色、+8 で反転)。テキストパレット 1-3 を入れ替える (青系)
 #   C_DIM 深い青 (枠・線)、C_OK 水色 (つながった・副題・◆)、C_TEXT 白 (見出し・待ち)、C_WARN 白の反転 (知らせ)、C_BAR 水色の反転
@@ -43,7 +46,7 @@ C_DIM, C_OK, C_TEXT = 1, 2, 3
 C_WARN, C_BAR = C_TEXT + 8, C_OK + 8
 # テキストパレット (GRB 各 5 ビット + I)。待ち IPL が始めに控えて書き、本物の IPL に飛ぶ前に戻す
 PALETTE = {                     # (R, G, B) 各 0-31
-    1: (2, 7, 22),              # 深い青 (枠・線)
+    1: (6, 10, 22),             # くすんだ青 (枠・まだの段階)
     2: (12, 24, 31),            # 水色 (つながった ●・副題・◆)
     3: (31, 31, 31),            # 白 (IOCS の字と "PICO ")
     4: (14, 26, 31),            # LIGHT: Z・電源の軸・"Z"
@@ -93,8 +96,6 @@ def strings():
     t['s_title'] = center(ROW_TITLE, 'SMB 接続待ち… (Wi-Fi / SMB を確認してください)')
     t['s_labels'] = (esc(ROW_WIFI, COL_LABEL) + sj('Wi-Fi') + esc(ROW_SMB, COL_LABEL) + sj('SMB') +
                      esc(ROW_HDS, COL_LABEL) + sj('HDS') + esc(ROW_TIME, COL_LABEL) + sj('経過'))
-    t['s_trk_l'] = esc(ROW_TRACK, TRACK_COL - 10) + sj('[Pico W]')
-    t['s_trk_r'] = esc(ROW_TRACK, TRACK_COL + TRACK_LEN * 2 + 2) + sj('[X68000 Z]')
     bar = ' S: 設定画面 (Wi-Fi / SMB / HDS)      ※ HDS を変えたら Z の電源を入れ直してください '
     # 枠の縦線 (┃ は 2 桁の字の真ん中に線がある: 4 桁目の左端と 93 桁目の右端) にそろえる。文言は真ん中
     b = sj(bar)
@@ -109,7 +110,9 @@ def strings():
     t['e_ip'] = esc(ROW_WIFI, COL_EXTRA)
     t['e_retry'] = esc(ROW_SMB, COL_EXTRA)
     t['e_msg'] = esc(ROW_MSG, COL_LABEL)
-    t['e_track'] = esc(ROW_TRACK, TRACK_COL)
+    t['e_stage'] = esc(ROW_TRACK, STAGE_COL)
+    for i, l in enumerate(STAGE_LABELS):
+        t['m_stage%d' % i] = sj(l)
     # 欄の中身 (幅をそろえる)
     for k, s in {'v_wifi0': '○ 未接続', 'v_wifi1': '○ 接続中', 'v_wifi2': '● 接続済み',
                  'v_smb0': '― ', 'v_smb1': '○ 接続待ち', 'v_smb2': '○ 接続中', 'v_smb3': '● 接続済み',
@@ -281,7 +284,7 @@ def main():
     a = ap.parse_args()
     W, H, pl, xb, info = placed()
     lines = ['/* mkbootwait.py が作った。直接直さない */', '',
-             'TRACK_LEN   = %d' % TRACK_LEN,
+             'STAGE_SEG   = %d' % STAGE_SEG, 'RETRY_MS    = %d' % RETRY_MS,
              'VALUE_W     = %d' % VALUE_W, 'EXTRA_W     = %d' % EXTRA_W, 'MSG_W       = %d' % MSG_W,
              'C_DIM       = %d' % C_DIM, 'C_OK        = %d' % C_OK, 'C_TEXT      = %d' % C_TEXT,
              'C_WARN      = %d' % C_WARN, 'C_BAR       = %d' % C_BAR,

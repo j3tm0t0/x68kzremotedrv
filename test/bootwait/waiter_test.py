@@ -127,6 +127,7 @@ class Screen:
             if c == 0x1b:
                 m = re.match(rb'\[(\d*)(?:;(\d*))?([A-Za-z])', data[i + 1:])
                 if m.group(3) == b'J':
+                    self.before_clear = [row[:] for row in self.cell]
                     self.clear()
                 elif m.group(3) == b'H':
                     self.y, self.x = int(m.group(1)) - 1, int(m.group(2)) - 1
@@ -211,6 +212,7 @@ class Z:
         u.mem_write(TPAL, struct.pack('>16H', *ROM_PAL))
         self.scr = Screen()
         self.snaps = []
+        self.snapattr = []
         self.on_snap = None
         u.mem_write(0xe8002a, b'\x01\xf0')         # 設定画面が残した同時アクセスとビットマスクの真似
         u.mem_write(0xe8002e, b'\xff\xff')
@@ -274,6 +276,8 @@ class Z:
             lba, n, sid, buf = d[2], d[3], d[4] & 7, a[1]
             if sid == 6 and BW_BAND <= lba < BW_BAND_END:
                 self.snaps.append([self.scr.row(r) for r in range(1, 33)])   # 前の回に描いたもの
+                self.snapattr.append([[a for ch, a in row] for row in self.scr.cell])
+                self.poll_ontime = self.clock
                 if self.on_snap:
                     self.on_snap(self, len(self.polls) + 1)
                 self.polls.append(lba)
@@ -293,6 +297,9 @@ class Z:
             u.reg_write(D[0], 0)
         elif fn == 0xff:                            # 試験の終わり (偽の IPL / 設定メニュー)
             self.result = ('jumped', u.reg_read(UC_M68K_REG_PC), d[7] & 0xff, d[4])
+            self.jump_ontime = self.clock
+            row = self.scr.before_clear[G.ROW_TRACK - 1]                  # 画面を戻す直前に出ていたもの
+            self.final_stage = ([ch for ch, a in row], [a for ch, a in row])
             self.at_jump = self.restored()
         else:
             raise RuntimeError('IOCS %#x' % fn)
@@ -431,10 +438,33 @@ def scenario_wait_then_ready(fl):
     check(len(secs) >= 10 and secs == sorted(secs) and secs[-1] > secs[0], 'elapsed seconds count up (%s)' % secs)
     sm = ' '.join(T(x) for x in rows(G.ROW_SMB))
     check('(次の再接続まで 4 秒)' in sm and '(次の再接続まで 3 秒)' in sm and '(接続を試しています)' in sm, 'next-retry countdown and "trying" shown')
-    trk = rows(G.ROW_TRACK)
-    pos = [x.index('◆') for x in trk if '◆' in x]
-    check(all(x.count('◆') == 1 for x in trk[1:]) and len(set(pos)) >= 5 and '[Pico W]' in trk[-1] and '[X68000 Z]' in trk[-1],
-          'packet travels between [Pico W] and [X68000 Z] (%d positions)' % len(set(pos)))
+    # 進み具合の行
+    c0 = G.STAGE_COL - 1                                                 # 0 始まりの桁
+    labw = [len(l.encode('cp932')) for l in G.STAGE_LABELS]
+    seg_start = []
+    x = c0
+    for i in range(3):
+        x += labw[i]
+        seg_start.append(x)
+        x += G.STAGE_SEG * 2
+    row_t = T(last[G.ROW_TRACK - 1][4:92]).strip()
+    check(all(l.strip() in row_t for l in G.STAGE_LABELS), 'stage row shows Wi-Fi / SMB / HDS / 起動 (%r)' % row_t)
+    k = [i for i, x in enumerate(S) if '(次の再接続まで 4 秒)' in T(x[G.ROW_SMB - 1])][0]
+    at, tx = z.snapattr[k][G.ROW_TRACK - 1], S[k][G.ROW_TRACK - 1]
+    fill = G.STAGE_SEG - -(-3200 * G.STAGE_SEG // G.RETRY_MS)
+    seg1 = [(tx[seg_start[1] + j * 2], at[seg_start[1] + j * 2]) for j in range(G.STAGE_SEG)]
+    want = [('━', G.C_OK)] * fill + [('◆', G.C_OK)] + [('━', G.C_DIM)] * (G.STAGE_SEG - fill - 1)
+    check(seg1 == want, 'SMB segment fills toward the next retry (3.2 s left: %d of %d) %s' % (fill, G.STAGE_SEG, ''.join(c for c, a in seg1)))
+    seg0 = set(at[seg_start[0] + j * 2] for j in range(G.STAGE_SEG))
+    smb_lab = at[seg_start[0] + G.STAGE_SEG * 2 + 1]
+    hds_lab = at[seg_start[1] + G.STAGE_SEG * 2 + 1]
+    check(seg0 == {G.C_OK} and smb_lab == G.C_TEXT and hds_lab == G.C_DIM, 'done stage light, current label white, next dim')
+    wpos = set(S[i][G.ROW_TRACK - 1][seg_start[0]:seg_start[0] + G.STAGE_SEG * 2].find('◆') for i in range(1, 4))
+    check(len(wpos) >= 2, 'packet moves within the current (Wi-Fi) segment (%s)' % sorted(wpos))
+    ch, ats = z.final_stage
+    lit = [ats[c] for c in range(c0, c0 + G.STAGE_ROW_W) if ch[c] not in (' ', '')]
+    check(lit and set(lit) == {G.C_OK}, 'all stages lit (incl. 起動) before the hand-over')
+    check(z.jump_ontime - z.poll_ontime >= 50, 'lit stages shown for >= 0.5 s (%d cs)' % (z.jump_ontime - z.poll_ontime))
     # 左右の釣り合い: 状態欄の塊・◆ の行・下のバーが画面 (= 枠) の中央にある
     def span(rs):
         xs = [c for r in rs for x in [last[r - 1]] for c in range(96) if x[c] not in ' \0┃']
@@ -443,10 +473,11 @@ def scenario_wait_then_ready(fl):
     b0 = min(c for r in (G.ROW_WIFI, G.ROW_SMB, G.ROW_HDS, G.ROW_TIME) for c in range(96) if widest[r - 1][c] not in ' \0┃') + 1
     b1 = max(c for r in (G.ROW_WIFI, G.ROW_SMB, G.ROW_HDS, G.ROW_TIME) for c in range(96) if widest[r - 1][c] not in ' \0┃') + 1
     t0, t1 = span([G.ROW_TRACK])
+    t0, t1 = G.STAGE_COL, G.STAGE_COL + G.STAGE_ROW_W - 1 if t1 < G.STAGE_COL + G.STAGE_ROW_W - 1 else t1
     f0, f1 = G.FRAME_LEFT, G.FRAME_LEFT + G.FRAME_WIDTH - 1
     bar_cols = [c + 1 for c in range(96) if z.bar_attrs[c] & 8]
     check(abs((b0 + b1) / 2 - 48.5) <= 3, 'status block centred (columns %d-%d)' % (b0, b1))
-    check(abs((t0 + t1) / 2 - 48.5) <= 1, 'track row centred (columns %d-%d)' % (t0, t1))
+    check(abs((t0 + t1) / 2 - 48.5) <= 1, 'stage row centred (columns %d-%d)' % (t0, t1))
     check(bar_cols and bar_cols[0] == f0 + 1 and bar_cols[-1] == f1 - 1,
           'bottom bar lines up with the frame lines (%d-%d, frame glyphs %d-%d)' % (bar_cols[0], bar_cols[-1], f0, f1))
     W_, H_, pls, xb, _ = G.placed()

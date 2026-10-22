@@ -156,7 +156,8 @@ noresp:
 
 redraw:
     bsr     draw_status
-    bsr     draw_track
+    bsr     calc_stage
+    bsr     draw_stages
     bra     loop
 
 changed:
@@ -176,6 +177,21 @@ ready:                                  /* IPL の和を確かめてから画面
     dbra    %d1,1b
     cmp.l   V_HDR+H_SUM.w,%d0
     bne     noresp
+    bsr     draw_status                 /* 全部の段階を点けて 0.5 秒見せてから */
+    moveq.l #4,%d7
+    bsr     draw_stages
+    moveq.l #0x7f,%d0                   /* ONTIME */
+    trap    #15
+    move.l  %d0,%d6
+3:
+    moveq.l #0x7f,%d0
+    trap    #15
+    sub.l   %d6,%d0
+    bpl     4f
+    neg.l   %d0
+4:
+    cmpi.l  #50,%d0
+    blt     3b
     bsr     screen_restore
     movea.w #BUF+512,%a0
     movea.w #0x2000,%a1
@@ -254,10 +270,6 @@ screen_init:
     lea.l   %pc@(s_title),%a1
     bsr     cprint
     lea.l   %pc@(s_labels),%a1
-    bsr     cprint
-    lea.l   %pc@(s_trk_l),%a1
-    bsr     cprint
-    lea.l   %pc@(s_trk_r),%a1
     bsr     cprint
     moveq.l #C_BAR,%d6
     lea.l   %pc@(s_bar),%a1
@@ -453,37 +465,111 @@ draw_msg:
     lea.l   %pc@(e_msg),%a1
     bra     lprint
 
-/* Pico から Z へ ◆ が走る: ━ x TRACK_LEN の V_SPIN 番目を ◆ に */
-draw_track:
+/* 今の段階を d7 に: 0 Wi-Fi (sysstatus 0-1) / 1 SMB (2-3) / 2 HDS (4-5、開けるまで) / 4 全部済み (BW_READY) */
+calc_stage:
+    moveq.l #4,%d7
+    cmpi.b  #1,V_HDR+H_STATE.w
+    beq     1f
+    moveq.l #0,%d7
+    move.b  V_HDR+H_SYS.w,%d0
+    cmpi.b  #2,%d0
+    bcs     1f
+    moveq.l #1,%d7
+    cmpi.b  #4,%d0
+    bcs     1f
+    moveq.l #2,%d7
+1:
+    rts
+
+/* 進み具合の行 "Wi-Fi ━━ SMB ━━ HDS ━━ 起動" (d7 = 今の段階)。済んだ段階は水色、今の段階は見出しが白で、
+   その区間に ◆ (0.5 秒ごとに動く)。SMB を待っている間は区間が次の再接続までの残りに合わせて埋まる。
+   まだの段階はくすんだ青。ロゴの輪 (色 12) もここで 0.5 秒ごとに明るく / 元に */
+draw_stages:
     moveq.l #0,%d0
     move.w  V_SPIN.w,%d0
     addq.w  #1,V_SPIN.w
-    divu.w  #TRACK_LEN,%d0
-    swap    %d0
-    move.w  %d0,%d3                     /* ◆ の位置 */
-    move.w  #PAL12,%d1                  /* ロゴの輪 (色 12) を 0.5 秒ごとに明るく / 元に */
-    btst    #0,%d3
-    beq     3f
+    move.w  #PAL12,%d1
+    btst    #0,%d0
+    beq     1f
     move.w  #PAL12_PULSE,%d1
-3:
+1:
     move.w  %d1,TPAL+12*2
-    lea.l   %pc@(e_track),%a1
+    divu.w  #STAGE_SEG,%d0
+    swap    %d0
+    move.w  %d0,%d3                     /* 今の区間で ◆ を置く位置 (待ちのとき) */
+    moveq.l #-1,%d2                     /* 今の区間の埋まった数 (-1: 埋めない) */
+    cmpi.w  #1,%d7
+    bne     2f
+    move.l  V_HDR+H_RETRY.w,%d0         /* SMB: 次の再接続まで */
+    beq     2f                          /* 試している最中: ◆ が動く */
+    cmpi.l  #-1,%d0
+    beq     2f
+    cmpi.l  #RETRY_MS,%d0
+    bls     3f
+    move.l  #RETRY_MS,%d0
+3:
+    mulu.w  #STAGE_SEG,%d0
+    addi.l  #RETRY_MS-1,%d0
+    divu.w  #RETRY_MS,%d0               /* 残りの区間 (切り上げ) */
+    moveq.l #STAGE_SEG,%d2
+    sub.w   %d0,%d2                     /* 埋まった数 */
+    bpl     4f
+    moveq.l #0,%d2
+4:
+    cmpi.w  #STAGE_SEG-1,%d2
+    bls     5f
+    moveq.l #STAGE_SEG-1,%d2
+5:
+    move.w  %d2,%d3                     /* ◆ は埋まった先 */
+2:
+    lea.l   %pc@(e_stage),%a1
     moveq.l #C_DIM,%d6
     bsr     cprint
-    moveq.l #0,%d4
-1:
+    moveq.l #0,%d4                      /* 段階 */
+6:
+    moveq.l #C_DIM,%d6                  /* 見出しの色 (moveq は条件を変えるので比べ直す) */
+    cmp.w   %d7,%d4
+    bhi     7f
+    moveq.l #C_TEXT,%d6
+    cmp.w   %d7,%d4
+    beq     7f
+    moveq.l #C_OK,%d6
+7:
+    move.w  %d4,%d0
+    add.w   %d0,%d0
+    lea.l   %pc@(t_stage),%a1
+    adda.w  %a1@(%d0.w),%a1
+    bsr     cprint
+    cmpi.w  #3,%d4
+    beq     9f
+    moveq.l #0,%d5                      /* 区間の中の位置 */
+8:
     lea.l   %pc@(m_rail),%a1
     moveq.l #C_DIM,%d6
-    cmp.w   %d4,%d3
-    bne     2f
+    cmp.w   %d7,%d4
+    bcs     10f                         /* 済んだ区間: 全部水色 */
+    bhi     11f                         /* まだの区間 */
+    cmp.w   %d3,%d5                     /* 今の区間 */
+    bne     12f
     lea.l   %pc@(m_packet),%a1
+    bra     10f
+12:
+    cmp.w   %d2,%d5
+    bge     11f                         /* 埋まった数より先 (d2 = -1 なら全部) */
+10:
     moveq.l #C_OK,%d6
-2:
+11:
     bsr     cprint
+    addq.w  #1,%d5
+    cmpi.w  #STAGE_SEG,%d5
+    bne     8b
     addq.w  #1,%d4
-    cmpi.w  #TRACK_LEN,%d4
-    bne     1b
+    bra     6b
+9:
     rts
+
+t_stage:
+    .word   m_stage0-t_stage, m_stage1-t_stage, m_stage2-t_stage, m_stage3-t_stage
 
 /* a1 (位置の ESC) を出してから LINE (a3 まで) を d6 の色で */
 lprint:
