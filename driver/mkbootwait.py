@@ -18,7 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ---- 画面の配置 (1 始まりの行・桁。テキスト画面は 96 桁 x 32 行、1 文字 8x16 ドット) ----
 FRAME_TOP, FRAME_BOTTOM, FRAME_LEFT, FRAME_WIDTH = 2, 28, 3, 92   # 3-94 桁
 ART_ROW = 4                     # 紋章の上端の行 (ドットでは (ART_ROW-1)*16)。ここから 6 行 (96 ドット) に IOCS の字は出さない
-SUBTITLE = 'Pico Z Loader   ・   Raspberry Pi Pico W / x68kzremotedrv'
+SUBTITLE = 'Pico Z Loader ･ Raspberry Pi Pico W / x68kzremotedrv'     # ･ は半角の中黒 (0xA5)。全角の ・ と空白 3 つは間が空きすぎた
+LOGO = os.environ.get('BW_LOGO', 'center')     # center: ロゴの行を見た目の中央に / subtitle: 左端を副題の左端に
 ASPECT = 1.125                  # X68k の 768x512 を 4:3 に映すと 1 ドットは横の 1.125 倍の高さ: 絵は縦を 1/ASPECT にしておく
 ROW_SUB, ROW_TITLE = 10, 12
 ROW_WIFI, ROW_SMB, ROW_HDS, ROW_TIME = 14, 15, 16, 17
@@ -88,7 +89,7 @@ def strings():
         return esc(row, (96 - len(b)) // 2 + 1) + b
 
     t['s_sub'] = center(ROW_SUB, SUBTITLE)
-    t['s_title'] = center(ROW_TITLE, 'SMB 接続待ち…   (Wi-Fi / SMB を確認してください)')
+    t['s_title'] = center(ROW_TITLE, 'SMB 接続待ち… (Wi-Fi / SMB を確認してください)')
     t['s_labels'] = (esc(ROW_WIFI, COL_LABEL) + sj('Wi-Fi') + esc(ROW_SMB, COL_LABEL) + sj('SMB') +
                      esc(ROW_HDS, COL_LABEL) + sj('HDS') + esc(ROW_TIME, COL_LABEL) + sj('経過'))
     t['s_trk_l'] = esc(ROW_TRACK, TRACK_COL - 10) + sj('[Pico W]')
@@ -211,11 +212,21 @@ def art():
     return W, H, planes
 
 
-def placed():
-    """ロゴ (輪と Z、PICO Z / LOADER の横並び) の左端を副題の左端にそろえる: 輪が副題の "Pico Z Loader" の上に来る。
+def placed(mode=None):
+    """ロゴ (輪と Z、PICO Z / LOADER の横並び) を置く。mode (既定 LOGO):
+      center   外形の中央と塗った点の重心 (輪は細いので軽い) の中間を画面の中央 (384) に
+      subtitle 左端を副題の左端に (輪が副題の "Pico Z Loader" の上に来る)
     バイト単位でしか置けないので、左に空き列を足してドット単位にする。戻り値: (幅 (8 の倍数), 高さ, プレーン, 置くバイト位置, 情報)"""
+    mode = mode or LOGO
     W, H, planes = art()
-    left = (96 - len(sj(SUBTITLE))) // 2 * 8                        # 副題の 1 文字目の左端 (ドット)
+    if mode == 'subtitle':
+        left = (96 - len(sj(SUBTITLE))) // 2 * 8                    # 副題の 1 文字目の左端 (ドット)
+        info = 'left edge x=%d (= subtitle)' % left
+    else:
+        ink = [x for y in range(H) for x in range(W) if any(p.getpixel((x, y)) for p in planes)]
+        cx = sum(ink) / len(ink)
+        left = round(384 - (W / 2 + cx) / 2)
+        info = 'optical centre: ink centroid %.1f, box centre %.1f, left edge x=%d' % (cx, W / 2, left)
     pad = left % 8
     W2 = (pad + W + 7) // 8 * 8
     out = []
@@ -223,7 +234,7 @@ def placed():
         q = Image.new('1', (W2, H), 0)
         q.paste(p, (pad, 0))
         out.append(q)
-    return W2, H, out, left // 8, 'lockup %dx%d, left edge x=%d (= subtitle)' % (W, H, left)
+    return W2, H, out, left // 8, 'lockup %dx%d, %s' % (W, H, info)
 
 
 def pieces(W, H, planes, left):

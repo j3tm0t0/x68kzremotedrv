@@ -136,7 +136,7 @@ class Screen:
                 ch, w = data[i:i + 2].decode('cp932'), 2
                 i += 2
             else:
-                ch, w = chr(c), 1
+                ch, w = (bytes([c]).decode('cp932') if 0xa1 <= c <= 0xdf else chr(c)), 1   # 半角カナ・中黒
                 i += 1
             if self.y < 32 and self.x + w <= 96:
                 self.cell[self.y][self.x] = (ch, self.attr)
@@ -182,7 +182,7 @@ def render(z, path):
                 d.rectangle([c * 8, r * 16, c * 8 + (16 if wide else 8) - 1, r * 16 + 15], fill=fg)
                 fg = rgb[0]
             if ch != ' ':
-                d.text((c * 8, r * 16 + (0 if wide else 1)), ch, fill=fg, font=fj if wide else fa)
+                d.text((c * 8, r * 16 + (0 if wide else 1)), ch, fill=fg, font=fj if wide or ord(ch) > 0x7f else fa)
     img.resize((1536, 1152), Image.LANCZOS).save(path)
 
 
@@ -454,7 +454,15 @@ def scenario_wait_then_ready(fl):
     lx0, lx1 = xb * 8 + min(ink), xb * 8 + max(ink)
     srow = last[G.ROW_SUB - 1]
     sub_x = min(c for c in range(4, 92) if srow[c] not in ' \0') * 8      # 枠の内側で最初の字
-    check(abs(lx0 - sub_x) <= 4, 'logo left edge lines up with the subtitle (logo x %d, subtitle x %d)' % (lx0, sub_x))
+    sub_x1 = (max(c for c in range(4, 92) if srow[c] not in ' \0') + 1) * 8
+    check(abs((sub_x + sub_x1) / 2 - 384) <= 4, 'subtitle centred (x %d-%d)' % (sub_x, sub_x1))
+    check('   ' not in T(srow[4:92]).strip(), 'subtitle has no wide gaps (%r)' % T(srow[4:92]).strip())
+    trow = T(last[G.ROW_TITLE - 1][4:92]).strip()
+    check('   ' not in trow, 'title has no wide gaps (%r)' % trow)
+    if G.LOGO == 'subtitle':
+        check(abs(lx0 - sub_x) <= 4, 'logo left edge lines up with the subtitle (logo x %d, subtitle x %d)' % (lx0, sub_x))
+    else:
+        check(abs((lx0 + lx1) / 2 - 383.5) <= 8, 'logo row optically centred (x %d-%d)' % (lx0, lx1))
     bar = last[G.ROW_BAR - 1]
     check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
     check(z.art_ok, 'logo bitmap in text VRAM planes 0-3 while waiting')
