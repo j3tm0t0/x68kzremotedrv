@@ -5,7 +5,8 @@
  * 前回控えた本物なので、Z のキャッシュには本物の分割表と SCSI ドライバが入る。これは後半で、前半が
  * SCSI ID 6 の LBA BW_STAGE2 から $2800 に読む (16KB まで。中身は変わらないのでキャッシュされて構わない)。
  *
- * 画面: 枠 (罫線)、紋章 (テキスト VRAM のプレーン 2・3 に直接描く絵)、Wi-Fi / SMB / HDS / 経過の欄、
+ * 画面: 枠 (罫線)、"Pico Z Loader" のロゴ (テキスト VRAM に直接描く絵。電源の輪と Z、PICO Z / LOADER)、
+ * Wi-Fi / SMB / HDS / 経過の欄、
  * Pico から Z へ ◆ が走る行、反転の案内。文字列・紋章・配置は mkbootwait.py が作る bootwait_gen.S。
  * 0.5 秒ごとに ID 6 の BW_BAND (src/bootwait_proto.h) を毎回違う番地で読み、
  *   BW_READY   -> 画面を元に戻し (パレット・プレーン 2-3・カーソル)、本物の IPL (1KB) を $2000 に置いて飛ぶ
@@ -36,7 +37,9 @@ V_HDR       = 0x7040                    /* 最後に受け取った応答の見�
 LINE        = 0x7100                    /* 表示する欄を組み立てる */
 BUF         = 0x7400                    /* 応答 3 セクタ */
 
-TVRAM_P2    = 0xe40000                  /* テキスト VRAM のプレーン 2・3 (紋章) */
+TVRAM_P0    = 0xe00000                  /* テキスト VRAM。ロゴは 4 プレーン、IOCS の字はプレーン 0・1 */
+TVRAM_P1    = 0xe20000
+TVRAM_P2    = 0xe40000
 TVRAM_P3    = 0xe60000
 TPAL        = 0xe82200
 CRTC_R21    = 0xe8002a
@@ -240,6 +243,12 @@ screen_init:
     lea.l   %pc@(s_cls),%a1
     bsr     cprint
     bsr     clear_art
+    lea.l   %pc@(art_p01),%a0           /* ロゴの行には IOCS の字を出さないので 4 プレーンとも使う (0 と 1 は同じ絵) */
+    lea.l   TVRAM_P0+ART_OFF,%a1
+    bsr     blit
+    lea.l   %pc@(art_p01),%a0
+    lea.l   TVRAM_P1+ART_OFF,%a1
+    bsr     blit
     lea.l   %pc@(art_p2),%a0
     lea.l   TVRAM_P2+ART_OFF,%a1
     bsr     blit
@@ -266,7 +275,7 @@ screen_init:
     bsr     cprint
     rts
 
-/* 本物の IPL・設定画面に渡す前に戻す: プレーン 2-3、パレット、色、消去、カーソル */
+/* 本物の IPL・設定画面に渡す前に戻す: テキスト VRAM、パレット、色、消去、カーソル */
 screen_restore:
     bsr     txreset
     bsr     clear_art
@@ -283,16 +292,17 @@ screen_restore:
     trap    #15
     rts
 
-/* プレーン 2・3 の見えるところ (512 ラスタ) を消す */
+/* テキスト VRAM 4 プレーンの見えるところ (512 ラスタ) を消す (ロゴは 4 プレーンに描くので IOCS の消去に任せない) */
 clear_art:
-    lea.l   TVRAM_P2,%a0
-    bsr     1f
-    lea.l   TVRAM_P3,%a0
+    lea.l   TVRAM_P0,%a0
+    moveq.l #3,%d1
 1:
     move.w  #512*128/4-1,%d0
 2:
     clr.l   %a0@+
     dbra    %d0,2b
+    adda.l  #0x20000-512*128,%a0        /* 次のプレーン */
+    dbra    %d1,1b
     rts
 
 /* a0 の絵 (ART_WB バイト x ART_H ラスタ) を a1 のテキスト VRAM に (1 ラスタ = 128 バイト) */
@@ -451,7 +461,7 @@ draw_track:
     divu.w  #TRACK_LEN,%d0
     swap    %d0
     move.w  %d0,%d3                     /* ◆ の位置 */
-    move.w  #PAL12,%d1                  /* 紋章の三角形の組 B を 0.5 秒ごとに明るく / 元に (組 A と交互に光って見える) */
+    move.w  #PAL12,%d1                  /* ロゴの輪 (色 12) を 0.5 秒ごとに明るく / 元に */
     btst    #0,%d3
     beq     3f
     move.w  #PAL12_PULSE,%d1

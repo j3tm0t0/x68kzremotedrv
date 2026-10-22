@@ -159,14 +159,13 @@ def render(z, path):
     rgb = [(((v >> 6) & 31) * 255 // 31, ((v >> 11) & 31) * 255 // 31, ((v >> 1) & 31) * 255 // 31) for v in pal]
     img = Image.new('RGB', (768, 512), rgb[0])
     px = img.load()
-    p2 = bytes(z.uc.mem_read(TVRAM + 0x40000, 512 * 128))
-    p3 = bytes(z.uc.mem_read(TVRAM + 0x60000, 512 * 128))
+    pl = [bytes(z.uc.mem_read(TVRAM + i * 0x20000, 512 * 128)) for i in range(4)]
     for y in range(512):
         for xb in range(96):
-            a, b = p2[y * 128 + xb], p3[y * 128 + xb]
-            if a | b:
+            bs = [p[y * 128 + xb] for p in pl]
+            if any(bs):
                 for k in range(8):
-                    v = ((a >> (7 - k)) & 1) * 4 + ((b >> (7 - k)) & 1) * 8
+                    v = sum(((b >> (7 - k)) & 1) << i for i, b in enumerate(bs))
                     if v:
                         px[xb * 8 + k, y] = rgb[v]
     d = ImageDraw.Draw(img)
@@ -332,9 +331,9 @@ class Z:
         return self.result
 
     def restored(self):
-        """本物の IPL / 設定画面に渡すときの画面: プレーン 2・3 が空、パレットが元どおり、カーソル表示、色 3、消去済み"""
+        """本物の IPL / 設定画面に渡すときの画面: テキスト VRAM 4 プレーンが空、パレットが元どおり、カーソル表示、色 3、消去済み"""
         u = self.uc
-        p23 = bytes(u.mem_read(TVRAM + 0x40000, 512 * 128)) + bytes(u.mem_read(TVRAM + 0x60000, 512 * 128))
+        p23 = b''.join(bytes(u.mem_read(TVRAM + i * 0x20000, 512 * 128)) for i in range(4))
         pal = list(struct.unpack('>16H', bytes(u.mem_read(TPAL, 32))))
         blank = all(self.scr.row(r).strip() == '' for r in range(1, 33))
         return {'planes': not any(p23), 'palette': pal == ROM_PAL, 'cursor': self.scr.cur,
@@ -388,11 +387,11 @@ def scenario_wait_then_ready(fl):
     def on_snap(zz, n):
         zz.pal12.add(struct.unpack('>H', bytes(zz.uc.mem_read(TPAL + 24, 2)))[0])
         if n == 8:                                  # 待っている最中の画面を確かめて PNG にする
-            W_, H_, a2, a3 = G.art()
+            W_, H_, pls = G.art()
             off = (G.ART_ROW - 1) * 16 * 128 + (768 - W_) // 2 // 8
             ok = True
             for y in range(H_):
-                for pl, im in ((0x40000, a2), (0x60000, a3)):
+                for pl, im in zip((0, 0x20000, 0x40000, 0x60000), pls):
                     row = bytes(zz.uc.mem_read(TVRAM + pl + off + y * 128, W_ // 8))
                     ok &= row == im.tobytes()[y * W_ // 8:(y + 1) * W_ // 8]
             zz.art_ok = ok
@@ -418,7 +417,7 @@ def scenario_wait_then_ready(fl):
     check(last[G.FRAME_TOP - 1][L - 1] == '┏' and last[G.FRAME_TOP - 1][L + W - 3] == '┓' and
           last[G.FRAME_BOTTOM - 1][L - 1] == '┗' and all(last[r - 1][L - 1] == '┃' and last[r - 1][L + W - 3] == '┃'
                                                        for r in range(G.FRAME_TOP + 1, G.FRAME_BOTTOM)), 'frame drawn with box characters')
-    check('Pico: SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and 'x68kzremotedrv' in last[G.ROW_SUB - 1], 'title and subtitle')
+    check('SMB 接続待ち' in T(last[G.ROW_TITLE - 1]) and 'Pico Z Loader' in last[G.ROW_SUB - 1], 'title and subtitle (Pico Z Loader)')
     for r, lab in ((G.ROW_WIFI, 'Wi-Fi'), (G.ROW_SMB, 'SMB'), (G.ROW_HDS, 'HDS'), (G.ROW_TIME, '経過')):
         check(T(last[r - 1][G.COL_LABEL - 1:]).startswith(lab), 'label %s aligned at column %d' % (lab, G.COL_LABEL))
     val = lambda r: set(T(x[G.COL_VALUE - 1:G.COL_VALUE - 1 + G.VALUE_W]).rstrip() for x in rows(r))
@@ -436,9 +435,9 @@ def scenario_wait_then_ready(fl):
           'packet travels between [Pico W] and [X68000 Z] (%d positions)' % len(set(pos)))
     bar = last[G.ROW_BAR - 1]
     check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
-    check(z.art_ok, 'emblem bitmap in text VRAM planes 2-3 while waiting')
+    check(z.art_ok, 'logo bitmap in text VRAM planes 0-3 while waiting')
     check(z.pal_ok, 'waiter palette set while waiting')
-    check(z.pal12 == {G.grb(*G.PALETTE[12]), G.grb(*G.PULSE)}, 'triangle pair B pulses (palette 12: %s)' % sorted(map(hex, z.pal12)))
+    check(z.pal12 == {G.grb(*G.PALETTE[12]), G.grb(*G.PULSE)}, 'logo ring pulses (palette 12: %s)' % sorted(map(hex, z.pal12)))
     check(z.cur_off, 'text cursor hidden while waiting')
     j = getattr(z, 'at_jump', {})
     check(j and all(j.values()), 'before the real IPL: planes 2-3 clear, palette restored, cursor on, colour 3, screen cleared (%s)' % j)
