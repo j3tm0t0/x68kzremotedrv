@@ -23,17 +23,20 @@ COL_LABEL, COL_VALUE, COL_EXTRA = 12, 20, 36
 VALUE_W, EXTRA_W, MSG_W = 16, 50, 80
 TRACK_COL, TRACK_LEN = 23, 20   # ◆ が走る線 (全角 20 文字 = 40 桁)
 
-# 文字の色 (IOCS _B_COLOR: 0-3 が色、+8 で反転)。テキストパレット 1-3 を入れ替える
-C_DIM, C_WARN, C_TEXT, C_BAR = 1, 2, 3, 3 + 8
+# 文字の色 (IOCS _B_COLOR: 0-3 が色、+8 で反転)。テキストパレット 1-3 を入れ替える (青系)
+#   C_DIM 深い青 (枠・線)、C_OK 水色 (つながった・副題・◆)、C_TEXT 白 (見出し・待ち)、C_WARN 白の反転 (知らせ)、C_BAR 水色の反転
+C_DIM, C_OK, C_TEXT = 1, 2, 3
+C_WARN, C_BAR = C_TEXT + 8, C_OK + 8
 # テキストパレット (GRB 各 5 ビット + I)。待ち IPL が始めに控えて書き、本物の IPL に飛ぶ前に戻す
-PALETTE = {
-    1: (6, 22, 20),             # 青緑 (枠・副題・つながった ●)
-    2: (31, 25, 6),             # 黄 (待ち ○・注意)
+PALETTE = {                     # (R, G, B) 各 0-31
+    1: (2, 7, 22),              # 深い青 (枠・線)
+    2: (12, 24, 31),            # 水色 (つながった ●・副題・◆)
     3: (31, 31, 31),            # 白
-    4: (28, 7, 5),              # 紋章の赤
-    8: (9, 3, 4),               # 影
-    12: (31, 19, 6),            # 紋章の明るい橙
+    4: (14, 26, 31),            # 紋章: 字と三角形の組 A (明るい水色)
+    8: (1, 3, 13),              # 紋章: 字の影 (紺)
+    12: (5, 13, 30),            # 紋章: 三角形の組 B (青)。待っている間は PULSE と交互に光る
 }
+PULSE = (22, 29, 31)            # 組 B が明るくなるとき
 
 
 def grb(r, g, b):
@@ -109,7 +112,7 @@ def strings():
 
 def emblem(size):
     """中心で向き合う 4 つの三角形の X (隙間あり)。各三角形は頂点が中心のそば、底辺が角を斜めに切る線。
-    左上・右下は明るい橙 (両プレーン)、右上・左下は赤 (プレーン 2 だけ)"""
+    左上・右下は組 B (両プレーン = 色 12)、右上・左下は組 A (プレーン 2 だけ = 色 4、字と同じ)"""
     img = Image.new('L', (size, size), 0)
     d = ImageDraw.Draw(img)
     m = size - 1
@@ -190,7 +193,9 @@ def main():
              'ART_OFF     = %d                  /* テキスト VRAM の中の位置: 行 * 128 + 桁 */' % ((ART_ROW - 1) * 16 * 128 + xb),
              'TRACK_LEN   = %d' % TRACK_LEN,
              'VALUE_W     = %d' % VALUE_W, 'EXTRA_W     = %d' % EXTRA_W, 'MSG_W       = %d' % MSG_W,
-             'C_DIM       = %d' % C_DIM, 'C_WARN      = %d' % C_WARN, 'C_TEXT      = %d' % C_TEXT, 'C_BAR       = %d' % C_BAR,
+             'C_DIM       = %d' % C_DIM, 'C_OK        = %d' % C_OK, 'C_TEXT      = %d' % C_TEXT,
+             'C_WARN      = %d' % C_WARN, 'C_BAR       = %d' % C_BAR,
+             'PAL12       = 0x%04x' % grb(*PALETTE[12]), 'PAL12_PULSE = 0x%04x' % grb(*PULSE),
              '']
     lines.append('pal_set:                                /* (パレット番号 * 2, 色) の組、0xffff で終わり */')
     for i, (r, g, b) in sorted(PALETTE.items()):

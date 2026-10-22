@@ -383,8 +383,10 @@ def scenario_wait_then_ready(fl):
     z = Z(p, on_poll)
     z.art_ok = z.pal_ok = z.cur_off = False
     z.bar_attr = 0
+    z.pal12 = set()
 
     def on_snap(zz, n):
+        zz.pal12.add(struct.unpack('>H', bytes(zz.uc.mem_read(TPAL + 24, 2)))[0])
         if n == 8:                                  # 待っている最中の画面を確かめて PNG にする
             W_, H_, a2, a3 = G.art()
             off = (G.ART_ROW - 1) * 16 * 128 + (768 - W_) // 2 // 8
@@ -395,7 +397,7 @@ def scenario_wait_then_ready(fl):
                     ok &= row == im.tobytes()[y * W_ // 8:(y + 1) * W_ // 8]
             zz.art_ok = ok
             pal = struct.unpack('>16H', bytes(zz.uc.mem_read(TPAL, 32)))
-            zz.pal_ok = all(pal[i] == G.grb(*c) for i, c in G.PALETTE.items())
+            zz.pal_ok = all(pal[i] == G.grb(*c) or (i == 12 and pal[i] == G.grb(*G.PULSE)) for i, c in G.PALETTE.items())
             zz.cur_off = not zz.scr.cur
             zz.bar_attr = max(zz.scr.attr_at(G.ROW_BAR, c) for c in range(1, 97))
             render(zz, PREVIEW)
@@ -436,6 +438,7 @@ def scenario_wait_then_ready(fl):
     check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
     check(z.art_ok, 'emblem bitmap in text VRAM planes 2-3 while waiting')
     check(z.pal_ok, 'waiter palette set while waiting')
+    check(z.pal12 == {G.grb(*G.PALETTE[12]), G.grb(*G.PULSE)}, 'triangle pair B pulses (palette 12: %s)' % sorted(map(hex, z.pal12)))
     check(z.cur_off, 'text cursor hidden while waiting')
     j = getattr(z, 'at_jump', {})
     check(j and all(j.values()), 'before the real IPL: planes 2-3 clear, palette restored, cursor on, colour 3, screen cleared (%s)' % j)

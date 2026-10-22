@@ -159,7 +159,7 @@ redraw:
 changed:
     bsr     draw_status
     lea.l   %pc@(m_changed),%a4
-    moveq.l #C_WARN+8,%d6               /* 反転の黄 */
+    moveq.l #C_WARN,%d6                 /* 反転 */
     bsr     draw_msg
 halt:
     bra     halt
@@ -249,6 +249,7 @@ screen_init:
     moveq.l #C_DIM,%d6
     lea.l   %pc@(s_frame),%a1
     bsr     cprint
+    moveq.l #C_OK,%d6
     lea.l   %pc@(s_sub),%a1
     bsr     cprint
     moveq.l #C_TEXT,%d6
@@ -314,14 +315,14 @@ draw_status:
     /* Wi-Fi: 0 未接続 / 1 接続中 / 2 以上 接続済み */
     lea.l   %pc@(e_wifi),%a1
     lea.l   %pc@(v_wifi0),%a4
-    moveq.l #C_WARN,%d6
+    moveq.l #C_TEXT,%d6
     tst.b   %d2
     beq     1f
     lea.l   %pc@(v_wifi1),%a4
     cmpi.b  #1,%d2
     beq     1f
     lea.l   %pc@(v_wifi2),%a4
-    moveq.l #C_DIM,%d6
+    moveq.l #C_OK,%d6
 1:
     bsr     field
     /* SMB: 2 未満 ― / 2 接続待ち / 3 接続中 / 4 以上 接続済み */
@@ -331,20 +332,20 @@ draw_status:
     cmpi.b  #2,%d2
     bcs     2f
     lea.l   %pc@(v_smb1),%a4
-    moveq.l #C_WARN,%d6
+    moveq.l #C_TEXT,%d6
     cmpi.b  #2,%d2
     beq     2f
     lea.l   %pc@(v_smb2),%a4
     cmpi.b  #3,%d2
     beq     2f
     lea.l   %pc@(v_smb3),%a4
-    moveq.l #C_DIM,%d6
+    moveq.l #C_OK,%d6
 2:
     bsr     field
     /* HDS: 開けた / 開けない / sysstatus 4 以上 開いています / 待っています */
     lea.l   %pc@(e_hds),%a1
     lea.l   %pc@(v_hds3),%a4
-    moveq.l #C_DIM,%d6
+    moveq.l #C_OK,%d6
     move.b  V_HDR+H_STATE.w,%d0
     cmpi.b  #1,%d0
     beq     3f
@@ -353,6 +354,7 @@ draw_status:
     cmpi.b  #3,%d0
     beq     3f
     lea.l   %pc@(v_hds1),%a4
+    moveq.l #C_TEXT,%d6
     cmpi.b  #4,%d2
     bcc     3f
     lea.l   %pc@(v_hds0),%a4
@@ -449,6 +451,12 @@ draw_track:
     divu.w  #TRACK_LEN,%d0
     swap    %d0
     move.w  %d0,%d3                     /* ◆ の位置 */
+    move.w  #PAL12,%d1                  /* 紋章の三角形の組 B を 0.5 秒ごとに明るく / 元に (組 A と交互に光って見える) */
+    btst    #0,%d3
+    beq     3f
+    move.w  #PAL12_PULSE,%d1
+3:
+    move.w  %d1,TPAL+12*2
     lea.l   %pc@(e_track),%a1
     moveq.l #C_DIM,%d6
     bsr     cprint
@@ -459,7 +467,7 @@ draw_track:
     cmp.w   %d4,%d3
     bne     2f
     lea.l   %pc@(m_packet),%a1
-    moveq.l #C_WARN,%d6
+    moveq.l #C_OK,%d6
 2:
     bsr     cprint
     addq.w  #1,%d4

@@ -8,17 +8,20 @@ VALUE_W     = 16
 EXTRA_W     = 50
 MSG_W       = 80
 C_DIM       = 1
-C_WARN      = 2
+C_OK        = 2
 C_TEXT      = 3
-C_BAR       = 11
+C_WARN      = 11
+C_BAR       = 10
+PAL12       = 0x697c
+PAL12_PULSE = 0xedbe
 
 pal_set:                                /* (パレット番号 * 2, 色) の組、0xffff で終わり */
-    .word   2, 0xb1a8
-    .word   4, 0xcfcc
+    .word   2, 0x38ac
+    .word   4, 0xc33e
     .word   6, 0xfffe
-    .word   8, 0x3f0a
-    .word   16, 0x1a48
-    .word   24, 0x9fcc
+    .word   8, 0xd3be
+    .word   16, 0x185a
+    .word   24, 0x697c
     .word   0xffff
 s_cls:
     .byte   0x1b,0x5b,0x32,0x4a,0x00
