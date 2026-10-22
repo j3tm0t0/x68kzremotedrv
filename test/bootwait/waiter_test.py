@@ -461,6 +461,9 @@ def scenario_wait_then_ready(fl):
     check('   ' not in trow, 'title has no wide gaps (%r)' % trow)
     if G.LOGO == 'subtitle':
         check(abs(lx0 - sub_x) <= 4, 'logo left edge lines up with the subtitle (logo x %d, subtitle x %d)' % (lx0, sub_x))
+    elif G.LOGO == 'between':
+        c = G.placed('center')[3] * 8
+        check(sub_x - 2 <= lx0 - 3 <= c + 8 and sub_x + 20 <= lx0, 'logo row between subtitle-aligned and centred (logo x %d, subtitle x %d)' % (lx0, sub_x))
     else:
         check(abs((lx0 + lx1) / 2 - 383.5) <= 8, 'logo row optically centred (x %d-%d)' % (lx0, lx1))
     bar = last[G.ROW_BAR - 1]
