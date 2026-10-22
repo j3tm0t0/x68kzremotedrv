@@ -2,7 +2,8 @@
 """待ち IPL (driver/bootwait1.S + bootwait.S) を Unicorn の 68000 で動かし、Pico 側 (src/bootwait.c をそのまま
 ホスト向けに組んだ libbw) と組み合わせて試す: make -C test/bootwait waiter
 
-IOCS (trap #15) は ここで真似る: B_BITSNS (F1)、B_PRINT (画面の記録)、ONTIME (偽の時計)、SCSIDRV S_READEXT。
+IOCS (trap #15) は ここで真似る: B_BITSNS (F1)、B_KEYSNS / B_KEYINP (S)、B_PRINT (画面の記録)、ONTIME (偽の時計)、
+SCSIDRV S_READEXT。
 SCSI の読み込みは Z の Linux と同じく LBA ごとにキャッシュし、同じ LBA は二度と Pico に聞かない。
 """
 import ctypes, os, shutil, struct, sys, tempfile
@@ -101,10 +102,11 @@ class Pico:
 class Z:
     """X68000 Z の側: 68000 + ROM の真似 + Linux の読み込みキャッシュ"""
 
-    def __init__(self, pico, on_poll=None, f1_at=None, noreply=0, clock=1234500):
+    def __init__(self, pico, on_poll=None, f1_at=None, key_at=None, noreply=0, clock=1234500):
         self.pico = pico
         self.on_poll = on_poll or (lambda z, n: None)
         self.f1_at = f1_at
+        self.key_at = key_at                        # (何回目の問い合わせのあと, キーコード)
         self.noreply = noreply
         self.clock = clock                          # ONTIME (1/100 秒)
         self.mono = 0                               # Pico の起動からの時間 (戻らない)
@@ -141,6 +143,13 @@ class Z:
         if fn == 0x04:                              # B_BITSNS
             v = 0x08 if (self.f1_at is not None and len(self.polls) >= self.f1_at and d[1] == 0x0c) else 0
             u.reg_write(D[0], v)
+        elif fn == 0x01:                            # B_KEYSNS
+            k = self.key_at
+            u.reg_write(D[0], k[1] if (k and len(self.polls) >= k[0]) else 0)
+        elif fn == 0x00:                            # B_KEYINP
+            k = self.key_at
+            u.reg_write(D[0], k[1] if k else 0)
+            self.key_at = None
         elif fn == 0x21:                            # B_PRINT
             s = bytearray()
             p = a[1]
@@ -258,10 +267,15 @@ def scenario_wait_then_ready(fl):
     check(r[0] == 'jumped' and r[3] == 0, 'd4 (SCSI ID from the ROM) restored to 0')
     t = z.text()
     check('Pico: SMB 接続待ち' in t, 'title shown')
+    check('#   #   ###    ###    ###    ###    ###        #####' in t and '\\' not in t, 'X68000 Z banner shown (no backslash: it is a yen sign on the X68k)')
+    check('[S] 設定画面 (Wi-Fi / SMB / HDS)' in t and '電源を入れ直してください' in t, 'setup key and power-cycle note shown')
+    anim = [l for l in t.split('\n') if '[Pico W]' in l]
+    check(len(anim) >= 3 and len(set(anim)) >= 3 and all(l.split('[Pico W] ')[1][:24].count('o') == 1 for l in anim),
+          'animation line moves (%d frames)' % len(set(anim)))
     for s in ('Wi-Fi 未接続', 'Wi-Fi 接続中', 'SMB 接続待ち', 'SMB 接続中'):
         check(s in t, 'status "%s" shown' % s)
     check('IP 192.168.1.118' in t, 'IP shown once Wi-Fi is up')
-    check(' 秒 ' in t and any(c in t for c in '|/-\\'), 'elapsed seconds and spinner shown')
+    check(' 秒 ' in t and all(c in t for c in '.oO'), 'elapsed seconds and spinner shown')
     check(len(z.polls) >= 12 and len(set(z.polls)) == len(z.polls), 'every poll at a fresh LBA (%d polls)' % len(z.polls))
     check(all(BW_BAND <= l < BW_BAND_END and (l - BW_BAND) % BW_STRIDE == 0 for l in z.polls), 'polls in the band, 64-sector aligned')
     gaps = [b - a for a, b in zip(z.polls, z.polls[1:])]
@@ -342,6 +356,13 @@ def scenario_f1(fl):
     check(r[0] == 'jumped' and r[2] == 0x77, 'F1 loads the setting menu from ID 6 (%r)' % (r,))
 
 
+def scenario_key_s(fl):
+    p = Pico(fl)
+    z = Z(p, key_at=(3, 0x1f73))                   # 's' (スキャンコード 0x1f)
+    r = z.boot()
+    check(r[0] == 'jumped' and r[2] == 0x77 and r[3] == 6, 'S loads the setting UI from ID 6 (%r)' % (r,))
+
+
 def scenario_nohds(fl):
     p = Pico(fl)
     p.sysstat = 5                                   # つながったが HDS が開けない
@@ -363,6 +384,7 @@ def main():
     scenario_stale(fl)
     scenario_ready_at_once(fl)
     scenario_f1(fl)
+    scenario_key_s(fl)
     scenario_nohds(fl)
     print('FAILED %d' % fails if fails else 'all passed')
     return 1 if fails else 0

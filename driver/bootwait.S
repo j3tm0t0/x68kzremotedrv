@@ -8,7 +8,7 @@
  *   BW_READY   -> 返ってきた本物の IPL (1KB) を $2000 に置いて飛ぶ (ROM から来たときの d4 = SCSI ID を戻す)
  *   BW_CHANGED -> 「電源を入れ直してください」と出して止まる
  *   それ以外   -> 状態を出して 0.5 秒後にもう一度
- * F1 を押すと設定メニュー (hdsboot.S と同じ)。
+ * S (か F1) を押すと設定画面 (hdsboot.S の F1 と同じ settingui を ID 6 から読む)。
  * Unicorn (ホスト試験) は movem を扱えないので使わない。
  */
 
@@ -24,6 +24,7 @@ V_LAST      = 0x3808                    /* 最後に問い合わせた時刻 */
 V_UP        = 0x380c                    /* 最後に受け取った Pico の起動からの ms */
 V_SPIN      = 0x3810
 LINE        = 0x3900                    /* 表示する行を組み立てる */
+ANIM_LEN    = 24
 BUF         = 0x4000                    /* 応答 3 セクタ */
 
 entry:
@@ -46,6 +47,16 @@ loop:
     trap    #15
     andi.b  #0x08,%d0                   /* F1 */
     bne     loadsetting
+    moveq.l #0x01,%d0                   /* B_KEYSNS */
+    trap    #15
+    tst.l   %d0
+    beq     1f
+    moveq.l #0x00,%d0                   /* B_KEYINP (読み捨てる) */
+    trap    #15
+    andi.b  #0xdf,%d0                   /* 大文字に */
+    cmpi.b  #'S',%d0
+    beq     loadsetting
+1:
 
     moveq.l #0x7f,%d0                   /* ONTIME */
     trap    #15
@@ -151,6 +162,28 @@ show:                                   /* a2 の文言 + IP + 経過秒 + く�
     lea.l   %pc@(m_pad),%a4
     bsr     copystr
     bsr     print
+                                        /* [Pico W] .....o........ [X68000 Z] */
+    movea.w #LINE,%a3
+    lea.l   %pc@(m_anim1),%a4
+    bsr     copystr
+    moveq.l #0,%d0
+    move.w  V_SPIN.w,%d0
+    divu.w  #ANIM_LEN,%d0
+    swap    %d0                         /* 光る位置 p */
+    neg.w   %d0
+    addi.w  #ANIM_LEN-1,%d0             /* dbra は数え下げなので ANIM_LEN-1-p で比べる */
+    moveq.l #ANIM_LEN-1,%d1
+5:
+    moveq.l #'.',%d2
+    cmp.w   %d0,%d1
+    bne     6f
+    moveq.l #'o',%d2
+6:
+    move.b  %d2,%a3@+
+    dbra    %d1,5b
+    lea.l   %pc@(m_anim2),%a4
+    bsr     copystr
+    bsr     print
     bra     loop
 
 changed:
@@ -225,6 +258,9 @@ print:
     rts
 
 loadsetting:                            /* hdsboot.S と同じ: ID 6 の設定メニューを読んで飛ぶ */
+    lea.l   %pc@(e_clear),%a1
+    moveq.l #0x21,%d0
+    trap    #15
     move.l  #(0x20000/512),%d2
     moveq.l #6,%d4
     moveq.l #1,%d3
@@ -265,17 +301,40 @@ m_screen:
     .byte   0x1b
     .ascii  "[2J"
     .byte   0x1b
-    .ascii  "[12;5H"
+    .ascii  "[3;22H#   #   ###    ###    ###    ###    ###        #####"
+    .byte   0x1b
+    .ascii  "[4;22H # #   #      #   #  #  ##  #  ##  #  ##          #"
+    .byte   0x1b
+    .ascii  "[5;22H  #    ####    ###   # # #  # # #  # # #         #"
+    .byte   0x1b
+    .ascii  "[6;22H # #   #   #  #   #  ##  #  ##  #  ##  #        #"
+    .byte   0x1b
+    .ascii  "[7;22H#   #   ###    ###    ###    ###    ###        #####"
+    .byte   0x1b
+    .ascii  "[9;22H-- Raspberry Pi Pico W / x68kzremotedrv --"
+    .byte   0x1b
+    .ascii  "[11;5H"
     /* Pico: SMB 接続待ち… (Wi-Fi/SMB を確認してください) */
     .byte   0x50,0x69,0x63,0x6f,0x3a,0x20,0x53,0x4d,0x42,0x20,0x90,0xda,0x91,0xb1,0x91,0xd2,0x82,0xbf,0x81,0x63,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x2f,0x53,0x4d,0x42,0x20,0x82,0xf0,0x8a,0x6d,0x94,0x46,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2,0x29
     .byte   0x1b
     .ascii  "[17;5H"
-    /* F1: 設定メニュー */
-    .byte   0x46,0x31,0x3a,0x20,0x90,0xdd,0x92,0xe8,0x83,0x81,0x83,0x6a,0x83,0x85,0x81,0x5b
+    /* [S] 設定画面 (Wi-Fi / SMB / HDS)   ([F1] でも入れます) */
+    .byte   0x5b,0x53,0x5d,0x20,0x90,0xdd,0x92,0xe8,0x89,0xe6,0x96,0xca,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x20,0x2f,0x20,0x53,0x4d,0x42,0x20,0x2f,0x20,0x48,0x44,0x53,0x29,0x20,0x20,0x20,0x28,0x5b,0x46,0x31,0x5d,0x20,0x82,0xc5,0x82,0xe0,0x93,0xfc,0x82,0xea,0x82,0xdc,0x82,0xb7,0x29
+    .byte   0x1b
+    .ascii  "[18;5H"
+    /* ※ 設定で HDS を変えたら、Z の電源を入れ直してください */
+    .byte   0x81,0xa6,0x20,0x90,0xdd,0x92,0xe8,0x82,0xc5,0x20,0x48,0x44,0x53,0x20,0x82,0xf0,0x95,0xcf,0x82,0xa6,0x82,0xbd,0x82,0xe7,0x81,0x41,0x5a,0x20,0x82,0xcc,0x93,0x64,0x8c,0xb9,0x82,0xf0,0x93,0xfc,0x82,0xea,0x92,0xbc,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2
     .byte   0
 e_row2:
     .byte   0x1b
-    .ascii  "[14;5H"
+    .ascii  "[13;5H"
+    .byte   0
+m_anim1:
+    .byte   0x1b
+    .ascii  "[15;5H[Pico W] "
+    .byte   0
+m_anim2:
+    .ascii  " [X68000 Z]"
     .byte   0
 e_clear:
     .byte   0x1b
@@ -303,7 +362,7 @@ m_ip:
 m_sec:      /* 秒 */
     .byte   0x20,0x95,0x62,0x20,0
 m_spin:
-    .ascii  "|/-\\"
+    .ascii  ".oOo"                      /* \ は X68k では円記号なので使わない */
 m_pad:
     .ascii  "          "
     .byte   0

@@ -627,8 +627,11 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
             return sysstatus >= STAT_CONFIGURED ? VD_IOERR : VD_NOTREADY;
         if (diskinfo[id].type == DTYPE_REMOTECOMM && lba >= NETPIPE_WLBA && lba < NETPIPE_WLBA + 8)
             return netpipe_write(lba, buf);     /* netpipe は SMB の接続を待たない */
-#endif
+        if (diskinfo[id].type != DTYPE_REMOTECOMM)
+            vd_sync();                          /* 設定画面 (ID 6 の vd_command) は接続を待たない (待ち IPL から入る) */
+#else
         vd_sync();
+#endif
 
         if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh != NULL) {
             if (hds_cache_write(diskinfo[id].smb2, diskinfo[id].sfh, lba, buf) < 0)
@@ -648,9 +651,21 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
             if (b->header.page == b->header.maxpage) {
                 // last page copy
                 int rsize;
+#if BOOTWAIT
+                /* 接続タスクが繋ぎにいっている間 (Wi-Fi は最大 30 秒) は USB タスクを止めず NOT READY で待たせる
+                   (msc_disk.c が呼び直し、Z の Linux が出し直す) */
+                if (xSemaphoreTake(remote_sem, 0) != pdTRUE)
+                    return VD_NOTREADY;
+#else
                 xSemaphoreTake(remote_sem, portMAX_DELAY);
+#endif
                 cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
                 if ((rsize = vd_command(vdbuf_write, vdbuf_read)) < 0) {
+#if BOOTWAIT
+                    if (sysstatus < STAT_CONFIGURED)
+                        rsize = -1;             /* リモートドライブ (B:) はまだ使えない */
+                    else
+#endif
                     rsize = remote_serv(vdbuf_write, vdbuf_read);
                 }
                 cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
