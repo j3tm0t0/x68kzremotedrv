@@ -22,9 +22,17 @@ ASPECT = 1.125                  # X68k の 768x512 を 4:3 に映すと 1 ドッ
 ROW_SUB, ROW_TITLE = 10, 12
 ROW_WIFI, ROW_SMB, ROW_HDS, ROW_TIME = 14, 15, 16, 17
 ROW_TRACK, ROW_MSG, ROW_BAR = 20, 23, 30
-COL_LABEL, COL_VALUE, COL_EXTRA = 12, 20, 36
-VALUE_W, EXTRA_W, MSG_W = 16, 50, 80
-TRACK_COL, TRACK_LEN = 23, 20   # ◆ が走る線 (全角 20 文字 = 40 桁)
+# 状態欄は「見出し 6 + 2、値 16、付け足し 22」の塊 (幅 46) を画面の中央に置く。付け足しの最長は
+# "(次の再接続まで 99 秒)" / "IP 255.255.255.255"。枠の内側 (5-92 桁) をはみ出さない
+VALUE_W, EXTRA_W = 16, 22
+BLOCK_W = 8 + VALUE_W + EXTRA_W
+COL_LABEL = (96 - BLOCK_W) // 2 + 1
+COL_VALUE, COL_EXTRA = COL_LABEL + 8, COL_LABEL + 8 + VALUE_W
+MSG_W = 66                      # 知らせは状態欄の左にそろえ、枠の手前まで
+# ◆ の行: "[Pico W]" 8 + 空き 2 + 線 (全角 20 = 40 桁) + 空き 2 + "[X68000 Z]" 10 = 62 桁を中央に
+TRACK_LEN = 20
+TRACK_ROW_W = 8 + 2 + TRACK_LEN * 2 + 2 + 10
+TRACK_COL = (96 - TRACK_ROW_W) // 2 + 1 + 10    # 線の始まり
 
 # 文字の色 (IOCS _B_COLOR: 0-3 が色、+8 で反転)。テキストパレット 1-3 を入れ替える (青系)
 #   C_DIM 深い青 (枠・線)、C_OK 水色 (つながった・副題・◆)、C_TEXT 白 (見出し・待ち)、C_WARN 白の反転 (知らせ)、C_BAR 水色の反転
@@ -85,7 +93,11 @@ def strings():
     t['s_trk_l'] = esc(ROW_TRACK, TRACK_COL - 10) + sj('[Pico W]')
     t['s_trk_r'] = esc(ROW_TRACK, TRACK_COL + TRACK_LEN * 2 + 2) + sj('[X68000 Z]')
     bar = ' S: 設定画面 (Wi-Fi / SMB / HDS)      ※ HDS を変えたら Z の電源を入れ直してください '
-    t['s_bar'] = center(ROW_BAR, bar)
+    # 枠の縦線 (┃ は 2 桁の字の真ん中に線がある: 4 桁目の左端と 93 桁目の右端) にそろえる。文言は真ん中
+    b = sj(bar)
+    bw = FRAME_WIDTH - 2
+    lpad = (bw - len(b)) // 2
+    t['s_bar'] = esc(ROW_BAR, FRAME_LEFT + 1) + b' ' * lpad + b + b' ' * (bw - len(b) - lpad)
     # 書き直す欄の位置
     t['e_wifi'] = esc(ROW_WIFI, COL_VALUE)
     t['e_smb'] = esc(ROW_SMB, COL_VALUE)
@@ -93,7 +105,7 @@ def strings():
     t['e_time'] = esc(ROW_TIME, COL_VALUE)
     t['e_ip'] = esc(ROW_WIFI, COL_EXTRA)
     t['e_retry'] = esc(ROW_SMB, COL_EXTRA)
-    t['e_msg'] = esc(ROW_MSG, 9)
+    t['e_msg'] = esc(ROW_MSG, COL_LABEL)
     t['e_track'] = esc(ROW_TRACK, TRACK_COL)
     # 欄の中身 (幅をそろえる)
     for k, s in {'v_wifi0': '○ 未接続', 'v_wifi1': '○ 接続中', 'v_wifi2': '● 接続済み',
@@ -176,7 +188,7 @@ def art():
     gap = 22
     zgap = 16                                                            # 'PICO ' の空白は切り取られるので足す
     tw = max(pico.size[0] + zgap + z.size[0], loader.size[0])
-    W = (ew + gap + tw + 7) // 8 * 8
+    W = ew + gap + tw
     planes = [Image.new('1', (W, H), 0) for _ in range(4)]
 
     def paste(img, x, y, ps):
@@ -198,6 +210,24 @@ def art():
     return W, H, planes
 
 
+def placed():
+    """ロゴを画面に置く: 外形の中央と、塗った点の重心 (輪は細いので軽い) の中間を画面の中央 (384) に合わせる。
+    バイト単位でしか置けないので、左に空き列を足してドット単位にする。戻り値: (幅 (8 の倍数), 高さ, プレーン, 置くバイト位置, 情報)"""
+    W, H, planes = art()
+    ink = [(x, y) for y in range(H) for x in range(W) if any(p.getpixel((x, y)) for p in planes)]
+    cx = sum(x for x, y in ink) / len(ink)
+    left = round(384 - (W / 2 + cx) / 2)
+    pad = left % 8
+    W2 = (pad + W + 7) // 8 * 8
+    out = []
+    for p in planes:
+        q = Image.new('1', (W2, H), 0)
+        q.paste(p, (pad, 0))
+        out.append(q)
+    info = 'lockup %d px, ink centroid %.1f (box centre %.1f), left edge x=%d' % (W, cx, W / 2, left)
+    return W2, H, out, left // 8, info
+
+
 def asm_bytes(label, data):
     out = ['%s:' % label]
     for i in range(0, len(data), 16):
@@ -210,8 +240,7 @@ def main():
     ap.add_argument('-o', default=os.path.join(HERE, 'bootwait_gen.S'))
     ap.add_argument('--png')
     a = ap.parse_args()
-    W, H, pl = art()
-    xb = (768 - W) // 2 // 8
+    W, H, pl, xb, info = placed()
     lines = ['/* mkbootwait.py が作った。直接直さない */', '',
              'ART_WB      = %d' % (W // 8), 'ART_H       = %d' % H,
              'ART_OFF     = %d                  /* テキスト VRAM の中の位置: 行 * 128 + 桁 */' % ((ART_ROW - 1) * 16 * 128 + xb),
@@ -244,7 +273,7 @@ def main():
                 v = sum(pl[i].getpixel((x, y)) << i for i in range(4))
                 img.putpixel((x, y), pal.get(v, (255, 0, 255)))
         img.resize((W * 2, H * 2), Image.NEAREST).save(a.png)
-    print('art %dx%d (%d bytes x 4 planes)' % (W, H, W // 8 * H))
+    print('art %dx%d (%d bytes x 4 planes); %s' % (W, H, W // 8 * H, info))
 
 
 if __name__ == '__main__':

@@ -387,8 +387,8 @@ def scenario_wait_then_ready(fl):
     def on_snap(zz, n):
         zz.pal12.add(struct.unpack('>H', bytes(zz.uc.mem_read(TPAL + 24, 2)))[0])
         if n == 8:                                  # 待っている最中の画面を確かめて PNG にする
-            W_, H_, pls = G.art()
-            off = (G.ART_ROW - 1) * 16 * 128 + (768 - W_) // 2 // 8
+            W_, H_, pls, xb, _ = G.placed()
+            off = (G.ART_ROW - 1) * 16 * 128 + xb
             ok = True
             for y in range(H_):
                 for pl, im in zip((0, 0x20000, 0x40000, 0x60000), pls):
@@ -399,6 +399,8 @@ def scenario_wait_then_ready(fl):
             zz.pal_ok = all(pal[i] == G.grb(*c) or (i == 12 and pal[i] == G.grb(*G.PULSE)) for i, c in G.PALETTE.items())
             zz.cur_off = not zz.scr.cur
             zz.bar_attr = max(zz.scr.attr_at(G.ROW_BAR, c) for c in range(1, 97))
+            zz.bar_attrs = [zz.scr.attr_at(G.ROW_BAR, c) if zz.scr.cell[G.ROW_BAR - 1][c - 1][0] != ' ' or zz.scr.attr_at(G.ROW_BAR, c) & 8 else 0
+                            for c in range(1, 97)]
             render(zz, PREVIEW)
     z.on_snap = on_snap
     r = z.boot()
@@ -433,6 +435,24 @@ def scenario_wait_then_ready(fl):
     pos = [x.index('◆') for x in trk if '◆' in x]
     check(all(x.count('◆') == 1 for x in trk[1:]) and len(set(pos)) >= 5 and '[Pico W]' in trk[-1] and '[X68000 Z]' in trk[-1],
           'packet travels between [Pico W] and [X68000 Z] (%d positions)' % len(set(pos)))
+    # 左右の釣り合い: 状態欄の塊・◆ の行・下のバーが画面 (= 枠) の中央にある
+    def span(rs):
+        xs = [c for r in rs for x in [last[r - 1]] for c in range(96) if x[c] not in ' \0┃']
+        return min(xs) + 1, max(xs) + 1
+    widest = [x for x in S if '(次の再接続まで' in T(x[G.ROW_SMB - 1])][-1]
+    b0 = min(c for r in (G.ROW_WIFI, G.ROW_SMB, G.ROW_HDS, G.ROW_TIME) for c in range(96) if widest[r - 1][c] not in ' \0┃') + 1
+    b1 = max(c for r in (G.ROW_WIFI, G.ROW_SMB, G.ROW_HDS, G.ROW_TIME) for c in range(96) if widest[r - 1][c] not in ' \0┃') + 1
+    t0, t1 = span([G.ROW_TRACK])
+    f0, f1 = G.FRAME_LEFT, G.FRAME_LEFT + G.FRAME_WIDTH - 1
+    bar_cols = [c + 1 for c in range(96) if z.bar_attrs[c] & 8]
+    check(abs((b0 + b1) / 2 - 48.5) <= 3, 'status block centred (columns %d-%d)' % (b0, b1))
+    check(abs((t0 + t1) / 2 - 48.5) <= 1, 'track row centred (columns %d-%d)' % (t0, t1))
+    check(bar_cols and bar_cols[0] == f0 + 1 and bar_cols[-1] == f1 - 1,
+          'bottom bar lines up with the frame lines (%d-%d, frame glyphs %d-%d)' % (bar_cols[0], bar_cols[-1], f0, f1))
+    W_, H_, pls, xb, _ = G.placed()
+    ink = [x for y in range(H_) for x in range(W_) if any(p.getpixel((x, y)) for p in pls)]
+    lx0, lx1 = xb * 8 + min(ink), xb * 8 + max(ink)
+    check(abs((lx0 + lx1) / 2 - 383.5) <= 8, 'logo lockup centred (x %d-%d)' % (lx0, lx1))
     bar = last[G.ROW_BAR - 1]
     check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
     check(z.art_ok, 'logo bitmap in text VRAM planes 0-3 while waiting')
