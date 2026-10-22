@@ -26,11 +26,15 @@ V_SPIN      = 0x3810
 V_UP0       = 0x3814                    /* 最初に受け取った Pico の起動からの ms (経過秒の起点) */
 LINE        = 0x3900                    /* 表示する行を組み立てる */
 ANIM_LEN    = 24
+LINE_END    = LINE+95                   /* 書き直す行は毎回ここまで空白で埋める (ESC[y;5H の 7 バイト + 88 桁、92 桁目まで) */
+CRTC_R21    = 0xe8002a                  /* テキストの同時アクセス・ラスタコピー */
+CRTC_R23    = 0xe8002e                  /* テキストのビットマスク */
 BUF         = 0x4000                    /* 応答 3 セクタ */
 
 entry:
     .ascii  "BW2!"                      /* 前半が確かめる */
 main:
+    bsr     txreset
     moveq.l #0x7f,%d0                   /* ONTIME */
     trap    #15
     move.l  %d0,V_T0.w
@@ -176,8 +180,7 @@ show:                                   /* a2 の文言 + IP + 経過秒 + く�
     andi.w  #3,%d0
     lea.l   %pc@(m_spin),%a4
     move.b  %a4@(%d0.w),%a3@+
-    lea.l   %pc@(m_pad),%a4
-    bsr     copystr
+    bsr     padto
     bsr     print
                                         /* [Pico W] .....o........ [X68000 Z] */
     movea.w #LINE,%a3
@@ -200,6 +203,7 @@ show:                                   /* a2 の文言 + IP + 経過秒 + く�
     dbra    %d1,5b
     lea.l   %pc@(m_anim2),%a4
     bsr     copystr
+    bsr     padto
     bsr     print
     bra     loop
 
@@ -209,8 +213,7 @@ changed:
     bsr     copystr
     lea.l   %pc@(m_changed),%a4
     bsr     copystr
-    lea.l   %pc@(m_pad),%a4
-    bsr     copystr
+    bsr     padto
     bsr     print
     bra     halt
 
@@ -277,11 +280,28 @@ putdec:
     bne     2b
     rts
 
+/* 行の残りを LINE_END まで空白で埋める (前に書いたものを必ず消す) */
+padto:
+    cmpa.w  #LINE_END,%a3
+    bcc     1f
+    move.b  #' ',%a3@+
+    bra     padto
+1:
+    rts
+
 print:
+    bsr     txreset
     clr.b   %a3@
     movea.w #LINE,%a1
     moveq.l #0x21,%d0
     trap    #15
+    rts
+
+/* 設定画面 (IOCS の TXBOX など) が残したテキストの同時アクセスとビットマスクを戻す。残っていると
+   書き直した文字が前の文字と重なって見える (実機で状態行がそうなった) */
+txreset:                                /* clr は先に読むので move で書く (R21 は読まない) */
+    move.w  #0,CRTC_R21
+    move.w  #0,CRTC_R23
     rts
 
 loadsetting:                            /* hdsboot.S と同じ: ID 6 の設定メニューを読んで飛ぶ */
@@ -356,7 +376,7 @@ m_screen:
     /* [S] 設定画面 (Wi-Fi / SMB / HDS)   ([F1] でも入れます) */
     .byte   0x5b,0x53,0x5d,0x20,0x90,0xdd,0x92,0xe8,0x89,0xe6,0x96,0xca,0x20,0x28,0x57,0x69,0x2d,0x46,0x69,0x20,0x2f,0x20,0x53,0x4d,0x42,0x20,0x2f,0x20,0x48,0x44,0x53,0x29,0x20,0x20,0x20,0x28,0x5b,0x46,0x31,0x5d,0x20,0x82,0xc5,0x82,0xe0,0x93,0xfc,0x82,0xea,0x82,0xdc,0x82,0xb7,0x29
     .byte   0x1b
-    .ascii  "[20;5H"
+    .ascii  "[21;5H"
     /* ※ 設定で HDS を変えたら、Z の電源を入れ直してください */
     .byte   0x81,0xa6,0x20,0x90,0xdd,0x92,0xe8,0x82,0xc5,0x20,0x48,0x44,0x53,0x20,0x82,0xf0,0x95,0xcf,0x82,0xa6,0x82,0xbd,0x82,0xe7,0x81,0x41,0x5a,0x20,0x82,0xcc,0x93,0x64,0x8c,0xb9,0x82,0xf0,0x93,0xfc,0x82,0xea,0x92,0xbc,0x82,0xb5,0x82,0xc4,0x82,0xad,0x82,0xbe,0x82,0xb3,0x82,0xa2
     .byte   0
@@ -406,9 +426,6 @@ m_secp:     /*  秒) */
     .byte   0x20,0x95,0x62,0x29,0
 m_spin:
     .ascii  ".oOo"                      /* \ は X68k では円記号なので使わない */
-m_pad:
-    .ascii  "                              "
-    .byte   0
     .even
 
     .end

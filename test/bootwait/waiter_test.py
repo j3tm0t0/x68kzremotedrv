@@ -121,6 +121,10 @@ class Z:
         u = self.uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
         u.ctl_set_cpu_model(UC_CPU_M68K_M68000)
         u.mem_map(0, 0x100000)
+        u.mem_map(0xe80000, 0x1000)                 # CRTC
+        u.mem_write(0xe8002a, b'\x01\xf0')         # 設定画面が残した同時アクセスとビットマスクの真似
+        u.mem_write(0xe8002e, b'\xff\xff')
+        self.dirty_prints = 0
         u.hook_add(UC_HOOK_CODE, self._hook)
         self.trap = False
 
@@ -163,6 +167,8 @@ class Z:
                 s.append(c)
                 p += 1
             self.screen.append(bytes(s).decode('cp932', 'replace'))
+            if u.mem_read(0xe8002a, 2) != b'\0\0' or u.mem_read(0xe8002e, 2) != b'\0\0':
+                self.dirty_prints += 1
         elif fn == 0x7f:                            # ONTIME
             self.clock += self.step
             self.mono += 2
@@ -272,6 +278,10 @@ def scenario_wait_then_ready(fl):
     check(r[0] == 'jumped' and r[3] == 0, 'd4 (SCSI ID from the ROM) restored to 0')
     t = z.text()
     check('Pico: SMB 接続待ち' in t, 'title shown')
+    check(z.dirty_prints == 0, 'CRTC R21/R23 cleared before every print (%d dirty)' % z.dirty_prints)
+    redraw = [l for l in z.screen if l.startswith('\x1b[15;5H') or l.startswith('\x1b[17;5H')]
+    check(redraw and all(len(l.encode('cp932')) == 95 for l in redraw), 'status/animation lines always padded to the same width')
+    check('\x1b[19;5H[S]' in t and '\x1b[21;5H' in t, 'blank row between the [S] and ※ lines')
     art = open(os.path.join(HERE, 'art.txt'), encoding='ascii').read().splitlines()
     check(len(art) >= 8 and all(l in t for l in art) and '\\' not in t, 'X68000 Z banner (%d lines) shown, no backslash (a yen sign on the X68k)' % len(art))
     secs = [int(m) for m in re.findall(r'経過 (\d+) 秒', t)]
