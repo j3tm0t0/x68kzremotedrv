@@ -72,6 +72,17 @@ else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE ACCEL_ENABLE=0)
 endif()
 
+# USB キーボード (src/hidkbd.c、UDP 6869 で picokbd と同じコマンドを受ける) を MSC に足す。-DHID_KEYBOARD=ON で入れる
+option(HID_KEYBOARD "USB HID keyboard (remote typing over UDP 6869) next to MSC" OFF)
+if(HID_KEYBOARD)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/hidkbd.c
+        src/hidkbd_cmd.c
+    )
+    # UDP の口: DHCP, DNS, netpipe, hidkbd で既定の 4 を使い切るので余裕を持たせる
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HID_KEYBOARD=1 MEMP_NUM_UDP_PCB=6)
+endif()
+
 pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_enable_stdio_uart(${PROJECT_NAME} 1)
 pico_enable_stdio_semihosting(${PROJECT_NAME} 0)

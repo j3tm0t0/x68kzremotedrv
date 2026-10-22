@@ -25,6 +25,7 @@
  */
 
 #include "tusb.h"
+#include "hidkbd.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
  * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
@@ -33,8 +34,17 @@
  *   [MSB]         HID | MSC | CDC          [LSB]
  */
 #define _PID_MAP(itf, n)  ( (CFG_TUD_##itf) << (n) )
+#if HID_KEYBOARD
+/* キーボードを足しても PID は MSC だけのとき (0xCafe:0x4002) のままにし、Z から見た MSC の素性を変えない。
+   区別は bcdDevice で付ける */
+#define USB_PID           (0x4000 | _PID_MAP(CDC, 0) | _PID_MAP(MSC, 1) | \
+                           _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
+#define USB_BCDDEVICE     0x0101
+#else
 #define USB_PID           (0x4000 | _PID_MAP(CDC, 0) | _PID_MAP(MSC, 1) | _PID_MAP(HID, 2) | \
                            _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
+#define USB_BCDDEVICE     0x0100
+#endif
 
 #define USB_VID   0xCafe
 #define USB_BCD   0x0200
@@ -55,7 +65,7 @@ tusb_desc_device_t const desc_device =
 
     .idVendor           = USB_VID,
     .idProduct          = USB_PID,
-    .bcdDevice          = 0x0100,
+    .bcdDevice          = USB_BCDDEVICE,
 
     .iManufacturer      = 0x01,
     .iProduct           = 0x02,
@@ -77,14 +87,42 @@ uint8_t const * tud_descriptor_device_cb(void)
 
 enum
 {
-  ITF_NUM_MSC,
+  ITF_NUM_MSC,                  // MSC は 0 番のまま (キーボードはその後ろ)
+#if HID_KEYBOARD
+  ITF_NUM_HID,
+#endif
   ITF_NUM_TOTAL
 };
 
-#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN)
-
 #define EPNUM_MSC_OUT     0x01
 #define EPNUM_MSC_IN      0x81
+
+#if HID_KEYBOARD
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_DESC_LEN)
+#define EPNUM_HID         0x82
+
+//--------------------------------------------------------------------+
+// HID Report Descriptor (boot protocol keyboard)
+//--------------------------------------------------------------------+
+
+uint8_t const desc_hid_keyboard_report[] =
+{
+  TUD_HID_REPORT_DESC_KEYBOARD()
+};
+
+// Invoked when received GET HID REPORT DESCRIPTOR
+uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
+{
+  (void) instance;
+  return desc_hid_keyboard_report;
+}
+
+// Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
+#define HID_DESC  , TUD_HID_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10)
+#else
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN)
+#define HID_DESC
+#endif
 
 uint8_t const desc_fs_configuration[] =
 {
@@ -92,7 +130,8 @@ uint8_t const desc_fs_configuration[] =
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
 
   // Interface number, string index, EP Out & EP In address, EP size
-  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 0, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 0, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64)
+  HID_DESC
 };
 
 #if TUD_OPT_HIGH_SPEED
@@ -102,7 +141,8 @@ uint8_t const desc_hs_configuration[] =
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
 
   // Interface number, string index, EP Out & EP In address, EP size
-  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512),
+  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512)
+  HID_DESC
 };
 #endif // highspeed
 

@@ -87,12 +87,19 @@
 //------------- CLASS -------------//
 #define CFG_TUD_CDC              0
 #define CFG_TUD_MSC              1
+#if defined(HID_KEYBOARD) && HID_KEYBOARD
+#define CFG_TUD_HID              1      // USB キーボード (src/hidkbd.c)
+#else
 #define CFG_TUD_HID              0
+#endif
 #define CFG_TUD_MIDI             0
 #define CFG_TUD_VENDOR           0
 
 // MSC Buffer size of Device Mass storage
 #define CFG_TUD_MSC_EP_BUFSIZE   512
+
+// HID buffer size: boot keyboard report (8 bytes, no report ID)
+#define CFG_TUD_HID_EP_BUFSIZE   8
 
 #ifdef __cplusplus
  }

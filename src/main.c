@@ -39,6 +39,7 @@
 #include "vd_command.h"
 #include "virtual_disk.h"
 #include "config_file.h"
+#include "hidkbd.h"
 
 //****************************************************************************
 // Global variables
@@ -96,13 +97,18 @@ static void main_task(void *params)
 
     vd_init();
 
+#if HID_KEYBOARD
+    printf("Start USB MSC + HID keyboard device.\n");
+#else
     printf("Start USB MSC device.\n");
+#endif
 
     /* USB MSC main loop */
 
     tusb_init();
     while (1) {
         tud_task();
+        hidkbd_task();
         taskYIELD();
     }
 }
