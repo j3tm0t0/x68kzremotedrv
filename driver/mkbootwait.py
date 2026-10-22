@@ -19,7 +19,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FRAME_TOP, FRAME_BOTTOM, FRAME_LEFT, FRAME_WIDTH = 2, 28, 3, 92   # 3-94 桁
 ART_ROW = 4                     # 紋章の上端の行 (ドットでは (ART_ROW-1)*16)。ここから 6 行 (96 ドット) に IOCS の字は出さない
 SUBTITLE = 'Pico Z Loader ･ Raspberry Pi Pico W / x68kzremotedrv'     # ･ は半角の中黒 (0xA5)。全角の ・ と空白 3 つは間が空きすぎた
-LOGO = os.environ.get('BW_LOGO', 'between')    # center: 見た目の中央 / subtitle: 左端を副題の左端に / between: その中間
+LOGO = os.environ.get('BW_LOGO', 'center')     # center: 見た目の中央 / subtitle: 左端を副題の左端に / between: その中間
+LOGO_SHIFT = int(os.environ.get('BW_LOGO_SHIFT', '-20'))   # center のときさらに動かすドット数 (負で左。少し左が見た目に合った)
 ASPECT = 1.125                  # X68k の 768x512 を 4:3 に映すと 1 ドットは横の 1.125 倍の高さ: 絵は縦を 1/ASPECT にしておく
 ROW_SUB, ROW_TITLE = 10, 12
 ROW_WIFI, ROW_SMB, ROW_HDS, ROW_TIME = 14, 15, 16, 17
@@ -216,7 +217,8 @@ def placed(mode=None):
     """ロゴ (輪と Z、PICO Z / LOADER の横並び) を置く。mode (既定 LOGO):
       center   外形の中央と塗った点の重心 (輪は細いので軽い) の中間を画面の中央 (384) に
       subtitle 左端を副題の左端に (輪が副題の "Pico Z Loader" の上に来る)
-      between  center と subtitle の中間 (既定)
+      between  center と subtitle の中間
+    center のときは LOGO_SHIFT だけ動かす (既定 -20: 少し左)
     バイト単位でしか置けないので、左に空き列を足してドット単位にする。戻り値: (幅 (8 の倍数), 高さ, プレーン, 置くバイト位置, 情報)"""
     mode = mode or LOGO
     W, H, planes = art()
@@ -224,7 +226,7 @@ def placed(mode=None):
     ink = [x for y in range(H) for x in range(W) if any(p.getpixel((x, y)) for p in planes)]
     cx = sum(ink) / len(ink)
     centre_left = round(384 - (W / 2 + cx) / 2)
-    left = {'subtitle': sub_left, 'center': centre_left}.get(mode, round((sub_left + centre_left) / 2))
+    left = {'subtitle': sub_left, 'center': centre_left + LOGO_SHIFT}.get(mode, round((sub_left + centre_left) / 2))
     info = '%s: left edge x=%d (subtitle x=%d, optical centre x=%d)' % (mode, left, sub_left, centre_left)
     pad = left % 8
     W2 = (pad + W + 7) // 8 * 8

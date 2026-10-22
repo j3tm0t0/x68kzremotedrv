@@ -465,7 +465,7 @@ def scenario_wait_then_ready(fl):
         c = G.placed('center')[3] * 8
         check(sub_x - 2 <= lx0 - 3 <= c + 8 and sub_x + 20 <= lx0, 'logo row between subtitle-aligned and centred (logo x %d, subtitle x %d)' % (lx0, sub_x))
     else:
-        check(abs((lx0 + lx1) / 2 - 383.5) <= 8, 'logo row optically centred (x %d-%d)' % (lx0, lx1))
+        check(abs((lx0 + lx1) / 2 - 383.5 - G.LOGO_SHIFT) <= 8, 'logo row optically centred, shifted %+d px (x %d-%d)' % (G.LOGO_SHIFT, lx0, lx1))
     bar = last[G.ROW_BAR - 1]
     check('S: 設定画面' in T(bar) and '電源を入れ直してください' in T(bar) and z.bar_attr & 8, 'bottom bar in reverse video')
     check(z.art_ok, 'logo bitmap in text VRAM planes 0-3 while waiting')
