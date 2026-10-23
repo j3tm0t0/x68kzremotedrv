@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <time.h>
 
+#if SD_CARD
 #include "ff.h"
 #include "smb2.h"
 #include "libsmb2.h"
@@ -392,3 +393,30 @@ int sdfs_statfs(const char *path, uint64_t *total, uint64_t *avail)
     sdc_unlock();
     return -fr2errno(fr);
 }
+
+#else   /* !SD_CARD */
+#include <stdint.h>
+#include <stdbool.h>
+#include <sys/types.h>
+#include <errno.h>
+#include "smb2.h"
+#include "libsmb2.h"
+#include "sdfs.h"
+bool sdfs_is(const char *rootpath) { (void)rootpath; return false; }   /* sd: のユニットは作らない (vd_init は rootpath を入れない) */
+int sdfs_stat(const char *path, struct smb2_stat_64 *st) { return -ENODEV; }
+int sdfs_mkdir(const char *path) { return -ENODEV; }
+int sdfs_rmdir(const char *path) { return -ENODEV; }
+int sdfs_rename(const char *a, const char *b) { return -ENODEV; }
+int sdfs_unlink(const char *path) { return -ENODEV; }
+uint64_t sdfs_opendir(const char *path, int *err) { *err = ENODEV; return 0; }
+struct smb2dirent *sdfs_readdir(uint64_t dir) { return NULL; }
+int sdfs_closedir(uint64_t dir) { return 0; }
+uint64_t sdfs_open(const char *path, int flags, int *err) { *err = ENODEV; return 0; }
+int sdfs_close(uint64_t fd) { return -EBADF; }
+ssize_t sdfs_read(uint64_t fd, void *buf, size_t count) { return -EBADF; }
+ssize_t sdfs_write(uint64_t fd, const void *buf, size_t count) { return -EBADF; }
+int sdfs_ftruncate(uint64_t fd, uint64_t length) { return -EBADF; }
+int64_t sdfs_lseek(uint64_t fd, int64_t offset, int whence) { return -EBADF; }
+int sdfs_fstat(uint64_t fd, struct smb2_stat_64 *st) { return -EBADF; }
+int sdfs_statfs(const char *path, uint64_t *total, uint64_t *avail) { *total = *avail = 0; return -ENODEV; }
+#endif  /* SD_CARD */

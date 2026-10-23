@@ -15,14 +15,17 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+#if SD_CARD
 #include "pico/aon_timer.h"
 #include "ff.h"
+#endif
 #include "smb2.h"
 #include "libsmb2.h"
 #include "main.h"
 #include "vd_command.h"
 #include "sdhds.h"
 
+#if SD_CARD
 #define SDHDS_MAX   6
 
 static FATFS fs;
@@ -148,6 +151,20 @@ int sdhds_write(void *handle, uint32_t lba, const uint8_t *buf, int nsect)
     return r;
 }
 
+#else   /* !SD_CARD: SD カードの無いビルド。呼ぶ側を変えずに済むように何もしない版 */
+
+void sdc_init(void) {}
+void sdc_lock(void) {}
+void sdc_unlock(void) {}
+bool sdc_mount(void) { return false; }
+bool sdhds_is(const char *path) { return strncmp(path, "sd:", 3) == 0; }
+int64_t sdhds_open(const char *path, void **handle) { (void)path; (void)handle; printf("SD: not in this build\n"); return -1; }
+bool sdhds_in_use(const char *sdpath) { (void)sdpath; return false; }
+int sdhds_read(void *handle, uint32_t lba, uint8_t *buf, int nsect) { return -1; }
+int sdhds_write(void *handle, uint32_t lba, const uint8_t *buf, int nsect) { return -1; }
+#endif  /* SD_CARD */
+
+#if SD_CARD && !PICO_RP2040
 /*
  * SMB の共有から SD カードへ写す (Wi-Fi 越しにカードへ HDS を載せる道。カードを抜かずに済む)。
  * 途中で切れたものを使わないよう、別名 (.part) に書いてから名前を変える。上書きは HDS として開いていないファイルだけ。
@@ -158,11 +175,7 @@ static volatile uint64_t cp_done, cp_total;
 
 static int64_t sd_copy(struct smb2_context *smb2, const char *smbpath, const char *sdpath, const char **why)
 {
-#if PICO_RP2040
-    size_t bsize = 8192;                /* Pico W は RAM が少ない */
-#else
     size_t bsize = 32768;
-#endif
     uint8_t *buf = malloc(bsize);
     char tmp[128];
     FIL *f = NULL;
@@ -357,3 +370,9 @@ int sdcopy_status(char *s, size_t size)
         return snprintf(s, size, " sdcopy=err:%s", cp_why);
     }
 }
+#else   /* SD カードが無いか Pico W (RP2040): 写す機能は無い (RAM が足りない) */
+int64_t sdhds_fetch(struct smb2_context *smb2, const char *smbpath, const char *sdpath) { return 0; }
+void sdcopy_init(void) {}
+const char *sdcopy_request(const char *args) { (void)args; return "err sdcopy not in this build"; }
+int sdcopy_status(char *s, size_t size) { (void)s; (void)size; return 0; }
+#endif

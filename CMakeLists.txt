@@ -36,10 +36,18 @@ add_definitions(-DHAVE_CONFIG_H)
 
 # Build libsmb2 as a library
 add_subdirectory(${LIBSMB2_PATH} libsmb2)
-# SD カード (SPI) と FatFs: HDS を SD に置く (config の HDS を "sd:/ファイル名" にする)
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/FatFs_SD/src FatFs_SD)
-# file_stream.c は fopencookie (GNU 拡張) を使う。使わないが、ライブラリがまとめて入れるのでここだけ GNU にする
-set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/lib/FatFs_SD/src/src/file_stream.c PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
+# SD カード (SPI) と FatFs: HDS を SD に置く (config の HDS を "sd:/ファイル名" にする)、リモートドライブのユニット (REMOTEn = sd:/)。
+# 既定は Pico 2 W だけ。Pico W は RAM が少ないので -DSD_CARD=ON で入れる (sdcopy と起動時の fetch は入らない)
+if(PICO_PLATFORM MATCHES "rp2350")
+    option(SD_CARD "microSD on SPI0 (FatFs)" ON)
+else()
+    option(SD_CARD "microSD on SPI0 (FatFs)" OFF)
+endif()
+if(SD_CARD)
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/FatFs_SD/src FatFs_SD)
+    # file_stream.c は fopencookie (GNU 拡張) を使う。使わないが、ライブラリがまとめて入れるのでここだけ GNU にする
+    set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/lib/FatFs_SD/src/src/file_stream.c PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
+endif()
 
 # Application, including in the FreeRTOS-Kernel
 add_executable(
@@ -55,7 +63,6 @@ add_executable(
         src/netpipe.c
         src/sdhds.c
         src/sdfs.c
-        src/hw_config.c
         src/usb_descriptors.c
         x68kserremote/service/remoteserv.c
         iconv/iconv_mini.c
@@ -168,7 +175,13 @@ target_link_libraries(${PROJECT_NAME}
         FreeRTOS-Kernel-Heap3
         tinyusb_device
         tinyusb_board
-        no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
+if(SD_CARD)
+    target_sources(${PROJECT_NAME} PRIVATE src/hw_config.c)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SD_CARD=1)
+    target_link_libraries(${PROJECT_NAME} no-OS-FatFS-SD-SDIO-SPI-RPi-Pico)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SD_CARD=0)
+endif()
 
 pico_add_extra_outputs(${PROJECT_NAME})
