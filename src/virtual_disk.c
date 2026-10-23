@@ -590,7 +590,8 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
                 }
                 b->header = vdbuf_header;
                 b->header.maxpage = vdbuf_rpages;
-                if (page > vdbuf_rpages || page >= (int)(sizeof(vdbuf_read) / (512 - 16))) {
+                if (vdbuf_rbase >= 0 &&
+                    (page > vdbuf_rpages || page >= (int)(sizeof(vdbuf_read) / (512 - 16)))) {
                     b->header.signature = 0;            /* 先読みなど: driver の照合 (先頭 12 バイト) に通らない */
                     b->header.page = 0xff;
                     memset(b->buf, 0, sizeof(b->buf));
