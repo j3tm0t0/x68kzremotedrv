@@ -46,6 +46,7 @@ void connect_task(void *params);
 void keepalive_task(void *params);
 
 void net_setup(void);
+void keepalive_poll(void);
 const char *net_hostname(void);
 struct smb2_context *connect_smb2(const char *share);
 void disconnect_smb2(struct smb2_context *smb2);

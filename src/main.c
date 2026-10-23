@@ -114,6 +114,7 @@ static void main_task(void *params)
     while (1) {
         tud_task();
         hidkbd_task();
+        keepalive_poll();               /* SMB の keepalive は HDS と同じ USB タスクで (connect.c) */
         taskYIELD();
     }
 }

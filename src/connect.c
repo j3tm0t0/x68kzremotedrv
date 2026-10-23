@@ -410,18 +410,33 @@ void connect_task(void *params)
 // Remote connection keepalive task
 //****************************************************************************
 
+/* SMB の接続 (smb2_context) は HDS の読み書きをする USB タスクと共有している。libsmb2 は同じ接続を 2 つのタスクから
+   同時に使えない (keepalive の smb2_stat と USB タスクの smb2_read が重なると中が壊れ、"Out of memory" で落ちた。
+   最初の keepalive は接続した直後に来るので、Z が起動のために HDS を読んでいる最中と重なりやすい)。
+   keepalive は印を立てるだけにして、USB タスクが自分の番に keepalive_poll で行う */
+static volatile bool keepalive_due;
+
+void keepalive_poll(void)
+{
+    if (!keepalive_due || sysstatus < STAT_SMB2_CONNECTED)
+        return;
+    if (xSemaphoreTake(remote_sem, 0) != pdTRUE)
+        return;                         /* 接続タスクが繋ぎにいっている: 次の周で */
+    keepalive_due = false;
+    keepalive_smb2_all();
+    xSemaphoreGive(remote_sem);
+}
+
 void keepalive_task(void *params)
 {
     while (1) {
         TickType_t delay;
-        xSemaphoreTake(remote_sem, portMAX_DELAY);
         if (sysstatus >= STAT_SMB2_CONNECTED) {
-            keepalive_smb2_all();
+            keepalive_due = true;
             delay = pdMS_TO_TICKS(5 * 60 * 1000);
         } else {
             delay = pdMS_TO_TICKS(30 * 1000);
         }
-        xSemaphoreGive(remote_sem);
         vTaskDelay(delay);
 
         extern char __HeapLimit;
