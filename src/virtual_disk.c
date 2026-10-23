@@ -402,25 +402,17 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
             int id = (lba - 0x400) / 0x400;
             lba %= 0x400;
             if (diskinfo[id].type != DTYPE_NOTUSED) {
-                // 1セクタ分のFAT領域(512/4=128エントリ)が占めるディスク領域 (128*32kB = 4MB)
-                int fatdsz = FATENTS_SECT * CLUSTER_SIZE;
-                // ファイルに使用するFAT領域のセクタ数(1セクタ未満切り捨て)
-                int fatsects = diskinfo[id].size / fatdsz;
-                // 1セクタに満たない分のFATエントリ数
-                int fatmod = (diskinfo[id].size % fatdsz) / CLUSTER_SIZE;
+                // ファイルの大きさを覆うクラスタの数 (端数は 1 クラスタに切り上げ)。鎖はちょうどその数で 0x0fffffff で終わる
+                // (以前は大きさが 32KB で割り切れるとき 1 クラスタ長かった。読むのには害が無いが fsck が指摘する)
+                uint32_t ncl = (uint32_t)(((uint64_t)diskinfo[id].size + CLUSTER_SIZE - 1) / CLUSTER_SIZE);   /* 0xfffffe00 でもあふれない */
                 // アクセスしようとしているFAT領域先頭のクラスタ番号
                 int clsno = 0x20000 + id * 0x20000 + FATENTS_SECT * lba;
-                if (lba < fatsects) {
-                    // アクセスしようとしているFAT領域のセクタはすべて使用中
-                    for (int i = 0; i < FATENTS_SECT; i++) {
-                        lbuf[i] = clsno + i + 1;    // クラスタチェインを作る
-                    }
-                } else if (lba == fatsects) {
-                    // アクセスしようとしているFAT領域のセクタは部分的に使われている
-                    for (int i = 0; i < fatmod; i++) {
-                        lbuf[i] = clsno + i + 1;    // クラスタチェインを作る
-                    }
-                    lbuf[fatmod] = 0x0fffffff;      // クラスタ末尾
+                for (int i = 0; i < FATENTS_SECT; i++) {
+                    uint32_t k = FATENTS_SECT * lba + i;    // ファイルの中のクラスタの番号
+                    if (k + 1 < ncl)
+                        lbuf[i] = clsno + i + 1;            // クラスタチェインを作る
+                    else if (k + 1 == ncl)
+                        lbuf[i] = 0x0fffffff;               // クラスタ末尾
                 }
             }
         }
