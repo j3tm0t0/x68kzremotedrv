@@ -299,6 +299,15 @@ uint8_t vdbuf_read[(512 - 16) * 8 * 4];
 uint8_t vdbuf_write[(512 - 16) * 8 * 4];
 int vdbuf_rpages;
 int vdbuf_rcnt;
+/* 応答のページは読まれた LBA から決める (読まれた回数で数えない)。
+   driver/scsiremote.c はページ i を sect + (i & 7) から読み、8 ページごとに sect を 8 下げ、古いキャッシュに当たると
+   sect を 0x10000 下げて読み直す。Z (Linux) はこの帯を 4KB (8 セクタ) 単位でキャッシュし、先読みもするので、Pico に
+   届く読み込みは driver の読み込みと 1 対 1 ではない。回数で数えると先読みや読み直しで vdbuf_rcnt が余分に 8 進み、
+   以降のページが 8 ページ先の中身になる (ヘッダの seqno は今の命令のものなので driver は気づかない。B: から読んだ
+   プログラムの再配置表が壊れて落ちた)。新しい driver は命令のヘッダ reserved[] に読み始めの sect (の下位 16 ビット、
+   8 単位) を入れてくる: ページ = ((起点 - 組) & 0xffff) / 8 * 8 + (lba & 7)。範囲外 (上向きの先読みなど) は署名を
+   壊して返し、driver に捨てさせる。reserved[0] の bit7 が無い古い driver には今までどおり数える。 */
+static int32_t vdbuf_rbase = -1;
 
 struct vdbuf_header vdbuf_header;
 
@@ -569,14 +578,25 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
                 }
                 return 0;
             } else if (lba >= (0x40000 / 512)) {
-                int page = vdbuf_rcnt + (lba % 8);
                 struct vdbuf *b = (struct vdbuf *)buf;
+                int page;
+                if (vdbuf_rbase >= 0) {
+                    page = (int)(((vdbuf_rbase - (lba & ~7u)) & 0xffff) / 8 * 8 + (lba % 8));
+                } else {
+                    page = vdbuf_rcnt + (lba % 8);
+                    if ((lba % 8) == 7) {
+                        vdbuf_rcnt += 8;
+                    }
+                }
                 b->header = vdbuf_header;
                 b->header.maxpage = vdbuf_rpages;
-                b->header.page = page;
-                memcpy(b->buf, &vdbuf_read[page * (512 - 16)], sizeof(b->buf));
-                if ((lba % 8) == 7) {
-                    vdbuf_rcnt += 8;
+                if (page > vdbuf_rpages || page >= (int)(sizeof(vdbuf_read) / (512 - 16))) {
+                    b->header.signature = 0;            /* 先読みなど: driver の照合 (先頭 12 バイト) に通らない */
+                    b->header.page = 0xff;
+                    memset(b->buf, 0, sizeof(b->buf));
+                } else {
+                    b->header.page = page;
+                    memcpy(b->buf, &vdbuf_read[page * (512 - 16)], sizeof(b->buf));
                 }
                 return 0;
             }
@@ -682,6 +702,8 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
                 xSemaphoreGive(remote_sem);
                 vdbuf_rpages = (rsize < 0) ? 0 : ((rsize - 1) / (512 - 16));
                 vdbuf_rcnt = 0;
+                vdbuf_rbase = (vdbuf_header.reserved[0] & 0x80) ?
+                              (((vdbuf_header.reserved[0] & 0x1f) << 8 | vdbuf_header.reserved[1]) << 3) : -1;
                 DPRINTF3("vdbuf_rpages=%d\n", vdbuf_rpages);
             }
             return 0;

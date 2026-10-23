@@ -103,11 +103,17 @@ void com_cmdres(void *wbuf, size_t wsize, void *rbuf, size_t rsize)
   int wcnt = (wsize - 1) / (512 - 16);
   int rcnt = (rsize - 1) / (512 - 16);
 
+  /* 応答を読み始める sect を先に決めて Pico に知らせる (下位 16 ビットを 8 単位で。Pico はページを LBA から決める:
+     Z の Linux の先読みや読み直しで Pico に届く読み込みの数が変わっても、ページを取り違えない) */
+  int rsect = ((sect - 8) % 0x200000) + 0x200000;
+
   h = &vdbuf_write.header;
   h->signature = 0x5836385a;    /* "X68Z" */
   h->session = seqtim;
   h->seqno = seqno;
   h->maxpage = wcnt;
+  h->reserved[0] = 0x80 | ((rsect >> 11) & 0x1f);
+  h->reserved[1] = (rsect >> 3) & 0xff;
   for (int i = 0; i <= wcnt; i++) {
     h->page = i;
     int s = wsize > (512 - 16) ? 512 - 16 : wsize;
@@ -122,7 +128,7 @@ void com_cmdres(void *wbuf, size_t wsize, void *rbuf, size_t rsize)
     }
   }
 
-  sect = ((sect - 8) % 0x200000) + 0x200000;
+  sect = rsect;
   h = &vdbuf_read.header;
   for (int i = 0; i <= rcnt; i++) {
     while (1) {
@@ -133,7 +139,8 @@ void com_cmdres(void *wbuf, size_t wsize, void *rbuf, size_t rsize)
         if ((i % 16) == 15)
           DPRINTF1("\r\n");
       }
-      if (memcmp(&vdbuf_read, &vdbuf_write, 12) == 0)
+      /* ページ番号も照合する (先頭 12 バイトは今の命令のものなので、別のページでも通ってしまう) */
+      if (memcmp(&vdbuf_read, &vdbuf_write, 12) == 0 && vdbuf_read.header.page == i)
         break;
       sect = ((sect - 0x10000) % 0x200000) + 0x200000;
     }
