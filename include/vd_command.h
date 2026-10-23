@@ -65,6 +65,13 @@ struct config_data {
     char tz[16];
     char tadjust[4];
     char fastconnect[4];
+
+    /* ネットワーク (フラッシュでは v4 の後ろに "NET1" を付けて置く)。hostname が空なら "pico-" + ボード ID の下 4 桁、ipaddr が空なら DHCP */
+    char hostname[32];
+    char ipaddr[16];
+    char netmask[16];
+    char gateway[16];
+    char dns[16];
 };
 
 /* scsiremote.sys communication protocol definition */

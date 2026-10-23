@@ -12,7 +12,7 @@
  * USB タスクが vd_sync で SMB の接続を待っている間も status は答える)。
  *
  * "status" だけはキーを押さず、専用の小さなタスクが 1 行で答える (キーの実行中でも、Z が USB を読みに来なくても):
- *   ok stat=<sysstatus> wifi=up|connecting|down|failed ip=a.b.c.d rssi=-55 smb=mounted|connected|connecting|failed|waiting
+ *   ok stat=<sysstatus> host=<ホスト名> wifi=up|connecting|down|failed ip=a.b.c.d rssi=-55 smb=mounted|connected|connecting|failed|waiting
  *      hds0=open|closed ... remote0=ok|none ... uptime=812s usb=mounted|unmounted reads=<セクタ> writes=<セクタ>
  *      npd=<netpipe の交換回数> accel=ready|busy|wait|off/<計算した数> hid=ok|busy|notready heap=<空き>
  * 状態は x68kzremotedrv の sysstatus (STAT_*) と diskinfo / rootpath をそのまま読む。
@@ -151,7 +151,7 @@ static const char *smb_state(void)
 /* status の 1 行を作る。cyw43_arch_lwip_begin の中で呼ぶ (RSSI を cyw43 に聞く) */
 static int status_line(char *s, int size)
 {
-    int n = snprintf(s, size, "ok stat=%d wifi=%s", sysstatus, wifi_state());
+    int n = snprintf(s, size, "ok stat=%d host=%s wifi=%s", sysstatus, net_hostname(), wifi_state());
     if (sysstatus >= STAT_WIFI_CONNECTED) {
         char ip[16];
         int32_t rssi = 0;

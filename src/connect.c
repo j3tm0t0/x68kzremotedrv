@@ -44,6 +44,9 @@
 #include "main.h"
 #include "sdhds.h"
 #include "pico/aon_timer.h"
+#include "pico/unique_id.h"
+#include "lwip/dhcp.h"
+#include "lwip/dns.h"
 #include "virtual_disk.h"
 #include "config_file.h"
 #include "msclog.h"
@@ -79,6 +82,48 @@ struct diskinfo diskinfo[7];
 //****************************************************************************
 // Private functions
 //****************************************************************************
+
+/* ホスト名 (DHCP で名乗る。どの基板も "PicoW" だったので見分けが付かなかった) と固定 IP。Wi-Fi につなぐ前に 1 回 */
+static char hostname[32];
+
+const char *net_hostname(void)
+{
+    return hostname;
+}
+
+void net_setup(void)
+{
+    if (config.hostname[0] != '\0') {
+        snprintf(hostname, sizeof hostname, "%s", config.hostname);
+    } else {
+        pico_unique_board_id_t id;
+        pico_get_unique_board_id(&id);
+        snprintf(hostname, sizeof hostname, "pico-%02x%02x",
+                 id.id[PICO_UNIQUE_BOARD_ID_SIZE_BYTES - 2], id.id[PICO_UNIQUE_BOARD_ID_SIZE_BYTES - 1]);
+    }
+    struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    ip4_addr_t ip, mask, gw, dns;
+    cyw43_arch_lwip_begin();
+    netif_set_hostname(n, hostname);
+    if (config.ipaddr[0] != '\0' && ip4addr_aton(config.ipaddr, &ip)) {
+        /* 固定 IP: DHCP を止めて番地を決める (つなぐ前なので DHCP はまだ何も送っていない) */
+        if (config.netmask[0] == '\0' || !ip4addr_aton(config.netmask, &mask))
+            IP4_ADDR(&mask, 255, 255, 255, 0);
+        if (config.gateway[0] == '\0' || !ip4addr_aton(config.gateway, &gw))
+            ip4_addr_set_zero(&gw);
+        if (config.dns[0] == '\0' || !ip4addr_aton(config.dns, &dns))
+            dns = gw;
+        dhcp_stop(n);
+        netif_set_addr(n, &ip, &mask, &gw);
+        ip_addr_t d;
+        ip_addr_copy_from_ip4(d, dns);
+        dns_setserver(0, &d);
+        printf("Static IP %s (hostname %s)\n", config.ipaddr, hostname);
+    } else {
+        printf("DHCP (hostname %s)\n", hostname);
+    }
+    cyw43_arch_lwip_end();
+}
 
 static void connection(int mode)
 {

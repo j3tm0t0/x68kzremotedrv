@@ -90,6 +90,7 @@ static void main_task(void *params)
     }
 
     cyw43_arch_enable_sta_mode();
+    net_setup();
 
     remote_sem = xSemaphoreCreateBinary();
     xSemaphoreGive(remote_sem);

@@ -119,7 +119,24 @@ const struct config_item {
       config.tadjust,               sizeof(config.tadjust),         0 },
     { "FASTCONNECT:",               "0",
       config.fastconnect,           sizeof(config.fastconnect),     0 },
+
+    /* v5 */
+    { "HOSTNAME:",                  NULL,
+      config.hostname,              sizeof(config.hostname),        0 },
+    { "IPADDR:",                    NULL,
+      config.ipaddr,                sizeof(config.ipaddr),          0 },
+    { "NETMASK:",                   NULL,
+      config.netmask,               sizeof(config.netmask),         0 },
+    { "GATEWAY:",                   NULL,
+      config.gateway,               sizeof(config.gateway),         0 },
+    { "DNS:",                       NULL,
+      config.dns,                   sizeof(config.dns),             0 },
 };
+
+/* ネットワークの項目 (最後の CONFIG_ITEMS_NET 個) は v4 の中身の後ろに印 CONFIG_NET_MAGIC を付けて置く。
+   magic は v4 のままなので、古いファームに戻しても設定は読める (古いファームが書き直すと印が消えて空に戻る) */
+#define CONFIG_ITEMS_NET 5
+#define CONFIG_NET_MAGIC "NET1"
 
 //****************************************************************************
 // Configuration functions
@@ -143,13 +160,22 @@ void config_read(void)
     const uint8_t *config_flash_addr = CONFIG_FLASH_ADDR;
     const char *p = &config_flash_addr[32];
     if (memcmp(&config_flash_addr[0], CONFIG_FLASH_MAGIC, sizeof(CONFIG_FLASH_MAGIC)) == 0) {
-        for (i = 0; i < CONFIG_ITEMS; i++) {
+        for (i = 0; i < CONFIG_ITEMS - CONFIG_ITEMS_NET; i++) {
             const struct config_item *c = &config_items[i];
             memcpy(c->value, p, c->valuesz);
             p += c->valuesz;
         }
+        if (memcmp(p, CONFIG_NET_MAGIC, 4) == 0) {
+            p += 4;
+            for (; i < CONFIG_ITEMS; i++) {
+                const struct config_item *c = &config_items[i];
+                memcpy(c->value, p, c->valuesz);
+                c->value[c->valuesz - 1] = '\0';
+                p += c->valuesz;
+            }
+        }
     } else if (memcmp(&config_flash_addr[0], CONFIG_FLASH_MAGIC_v3, sizeof(CONFIG_FLASH_MAGIC_v3)) == 0) {
-        for (i = 0; i < CONFIG_ITEMS - 1; i++) {
+        for (i = 0; i < CONFIG_ITEMS - CONFIG_ITEMS_NET - 1; i++) {
             const struct config_item *c = &config_items[i];
             memcpy(c->value, p, c->valuesz);
             p += c->valuesz;
@@ -195,7 +221,8 @@ void config_read(void)
              config.remote[7],
              config.tz,
              config.tadjust,
-             config.fastconnect);
+             config.fastconnect,
+             config.hostname, config.ipaddr, config.netmask, config.gateway, config.dns);
 
     for (i = 0; i < 8; i++) {
         for (char *p = config.remote[i]; *p != '\0'; p++) {
@@ -218,6 +245,10 @@ void config_write(void)
     char *p = &flash_data[32];
     for (int i = 0; i < CONFIG_ITEMS; i++) {
         const struct config_item *c = &config_items[i];
+        if (i == CONFIG_ITEMS - CONFIG_ITEMS_NET) {
+            memcpy(p, CONFIG_NET_MAGIC, 4);
+            p += 4;
+        }
         memcpy(p, c->value, c->valuesz);
         p += c->valuesz;
     }

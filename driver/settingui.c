@@ -183,6 +183,33 @@ struct itemtbl itemtbl[] = {
     "保存されている設定内容をクリアします  よろしいですか？",
     "#h (クリアする) #i #f  (前に戻る)",
     -1, -1, NULL, 0, flash_clear },
+
+  /* ネットワーク (表の最後に足す。途中に入れると xn の番号がずれる) */
+  { 0x010, 52, 8, -1, "HOSTNAME",
+    "Pico がネットワークで名乗るホスト名を設定します",
+    "ホスト名を入力してください (空欄なら pico- とボード ID の下 4 桁)",
+    "#e  (確定) #f   (前に戻る)",
+    64, 28, config.hostname,        sizeof(config.hostname),       input_entry },
+  { 0x000, 52, 9, -1, "IPADDR",
+    "固定の IP アドレスを設定します",
+    "IP アドレスを入力してください (空欄なら DHCP)",
+    "#e  (確定) #f   (前に戻る)",
+    64, 16, config.ipaddr,          sizeof(config.ipaddr),         input_entry },
+  { 0x000, 52, 10, -1, "NETMASK",
+    "固定 IP のネットマスクを設定します",
+    "ネットマスクを入力してください (空欄なら 255.255.255.0)",
+    "#e  (確定) #f   (前に戻る)",
+    64, 16, config.netmask,         sizeof(config.netmask),        input_entry },
+  { 0x000, 52, 11, -1, "GATEWAY",
+    "固定 IP のゲートウェイを設定します",
+    "ゲートウェイの IP アドレスを入力してください",
+    "#e  (確定) #f   (前に戻る)",
+    64, 16, config.gateway,         sizeof(config.gateway),        input_entry },
+  { 0x000, 52, 12, -1, "DNS",
+    "固定 IP の DNS サーバを設定します",
+    "DNS サーバの IP アドレスを入力してください (空欄ならゲートウェイ)",
+    "#e  (確定) #f   (前に戻る)",
+    64, 16, config.dns,             sizeof(config.dns),            input_entry },
 };
 
 #define N_ITEMTBL (countof(itemtbl))
@@ -249,6 +276,9 @@ int topview(void)
 
     drawmsg(52, 3, 3, "その他の設定");
     drawframe3(50, 4, 44, 3, 2, 10);
+
+    drawmsg(52, 7, 3, "ネットワーク設定 (再起動後に有効)");
+    drawframe3(50, 8, 44, 5, 2, 10);
 
     drawframe3(80, 27, 14, 1, 2, -1);
   }

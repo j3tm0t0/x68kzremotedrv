@@ -39,3 +39,10 @@ TADJUST: %s
 # 1に設定した場合はHDSファイルのイメージサイズが正しく取得できない副作用がある
 # 通常は問題ないがformat.xで装置初期化を行う際は0を設定しておく必要がある
 FASTCONNECT: %s
+
+# ホスト名 (空欄なら pico-ボードIDの下4桁)、固定IP (空欄ならDHCP)
+HOSTNAME: %s
+IPADDR: %s
+NETMASK: %s
+GATEWAY: %s
+DNS: %s
