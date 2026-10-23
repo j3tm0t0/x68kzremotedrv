@@ -12,7 +12,7 @@
  * USB タスクが vd_sync で SMB の接続を待っている間も status は答える)。
  *
  * "status" だけはキーを押さず、専用の小さなタスクが 1 行で答える (キーの実行中でも、Z が USB を読みに来なくても):
- *   ok stat=<sysstatus> host=<ホスト名> wifi=up|connecting|down|failed ip=a.b.c.d rssi=-55 smb=mounted|connected|connecting|failed|waiting
+ *   ok host=<ホスト名> stat=<sysstatus> wifi=up|connecting|down|failed ip=a.b.c.d rssi=-55 smb=mounted|connected|connecting|failed|waiting
  *      hds0=open|closed ... remote0=ok|none ... uptime=812s usb=mounted|unmounted reads=<セクタ> writes=<セクタ>
  *      npd=<netpipe の交換回数> accel=ready|busy|wait|off/<計算した数> hid=ok|busy|notready heap=<空き>
  * 状態は x68kzremotedrv の sysstatus (STAT_*) と diskinfo / rootpath をそのまま読む。
@@ -70,12 +70,20 @@ static bool running, have_rep;
 static uint32_t due, wait_from;
 
 /* lwIP スレッドの中で呼ぶ */
+/* 返事はどれも最初の語 (ok / err) の直後に host=<ホスト名> を入れる (PZL と同じ形。どの基板の返事か分かる) */
 static void sendto_locked(const char *s, const ip_addr_t *addr, u16_t port)
 {
-    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, strlen(s), PBUF_RAM);
+    char b[480];
+    size_t w = strcspn(s, " ");
+    int n = snprintf(b, sizeof b, "%.*s host=%s%s", (int)w, s, net_hostname(), s + w);
+    if (n < 0)
+        return;
+    if (n >= (int)sizeof b)
+        n = sizeof b - 1;
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, n, PBUF_RAM);
     if (p == NULL)
         return;
-    memcpy(p->payload, s, strlen(s));
+    memcpy(p->payload, b, n);
     udp_sendto(kpcb, p, addr, port);
     pbuf_free(p);
 }
@@ -151,7 +159,7 @@ static const char *smb_state(void)
 /* status の 1 行を作る。cyw43_arch_lwip_begin の中で呼ぶ (RSSI を cyw43 に聞く) */
 static int status_line(char *s, int size)
 {
-    int n = snprintf(s, size, "ok stat=%d host=%s wifi=%s", sysstatus, net_hostname(), wifi_state());
+    int n = snprintf(s, size, "ok stat=%d wifi=%s", sysstatus, wifi_state());
     if (sysstatus >= STAT_WIFI_CONNECTED) {
         char ip[16];
         int32_t rssi = 0;
