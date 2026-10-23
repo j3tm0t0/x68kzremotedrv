@@ -73,7 +73,7 @@ static uint32_t due, wait_from;
 /* 返事はどれも最初の語 (ok / err) の直後に host=<ホスト名> を入れる (PZL と同じ形。どの基板の返事か分かる) */
 static void sendto_locked(const char *s, const ip_addr_t *addr, u16_t port)
 {
-    char b[480];
+    static char b[480];                 /* 呼ぶ側はどちらも lwIP の錠の中 (on_udp / cyw43_arch_lwip_begin)。status タスクのスタックに置かない */
     size_t w = strcspn(s, " ");
     int n = snprintf(b, sizeof b, "%.*s host=%s%s", (int)w, s, net_hostname(), s + w);
     if (n < 0)
@@ -217,7 +217,7 @@ static void status_task(void *params)
 
 void hidkbd_init(void)
 {
-    xTaskCreate(status_task, "HidKbdStatus", 768, NULL, 1, &st_th);
+    xTaskCreate(status_task, "HidKbdStatus", 1024, NULL, 1, &st_th);
     sdcopy_init();
     cyw43_arch_lwip_begin();
     kpcb = udp_new();

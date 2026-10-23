@@ -433,7 +433,7 @@ void keepalive_task(void *params)
         struct tm *tm = localtime(&tt);
         printf("%04d/%02d/%02d %02d:%02d:%02d\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
 
-        static TaskStatus_t pxTaskStatusArray[8];
+        static TaskStatus_t pxTaskStatusArray[16];   /* 8 では足りず (タスクが 9 つ以上) 何も出ていなかった */
         unsigned long ulTotalRunTime;
         int uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, count_of(pxTaskStatusArray), &ulTotalRunTime);
         printf("ID Task Name        S Pr Stack\n");
