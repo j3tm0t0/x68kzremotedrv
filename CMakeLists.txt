@@ -2,19 +2,35 @@ cmake_minimum_required(VERSION 3.24)
 
 # Get the Pico SDK from https://github.com/raspberrypi/pico-sdk.git tested on TAG 1.4.0
 # Get FreeRTOS from https://github.com/FreeRTOS/FreeRTOS-Kernel.git tested on TAG V10.5.0
-set(PICO_SDK_PATH ${CMAKE_CURRENT_LIST_DIR}/pico-sdk)
-set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_LIST_DIR}/FreeRTOS-Kernel)
+# Pico 2 W (-DPICO_BOARD=pico2_w) と SD カード (lib/FatFs_SD の pico/aon_timer) は pico-sdk 2.x が要る:
+# -DPICO_SDK_PATH=<pico-sdk 2.1.1> -DFREERTOS_KERNEL_PATH=<raspberrypi/FreeRTOS-Kernel 4f7299d (RP2350 の port)>
+set(PICO_SDK_PATH ${CMAKE_CURRENT_LIST_DIR}/pico-sdk CACHE PATH "pico-sdk")
+set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_LIST_DIR}/FreeRTOS-Kernel CACHE PATH "FreeRTOS-Kernel")
 set(LIBSMB2_PATH ${CMAKE_CURRENT_LIST_DIR}/libsmb2)
 
 # Name the project and prepare it to be a pico_w project, using FreeRTOS and lwip
 set(PROJECT_NAME x68kzremotedrv)
-set(PICO_BOARD pico_w)
+set(PICO_BOARD pico_w CACHE STRING "pico_w or pico2_w")
 include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
-include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+if(PICO_BOARD STREQUAL "pico2_w")
+    include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2350_ARM_NTZ/FreeRTOS_Kernel_import.cmake)
+else()
+    include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+endif()
 project(${PROJECT_NAME} C CXX ASM)
 pico_sdk_init()
 
 # Add a couple of definitions that all projects/libraries can/should use
+# Pico 2 W (RP2350): FreeRTOS のコア数 (-DP2W_CORES=1|2)。1 コアなら、フラッシュの書き込み (flash_safe_execute) が
+# コア 1 を止めようとして NOT_PERMITTED (-4) にならないよう、コア 1 は安全と宣言する
+if(PICO_PLATFORM MATCHES "rp2350")
+    set(P2W_CORES 1 CACHE STRING "FreeRTOS cores on the RP2350 (1 or 2)")
+    add_compile_definitions(P2W_CORES=${P2W_CORES})
+    if(P2W_CORES EQUAL 1)
+        add_compile_definitions(PICO_FLASH_ASSUME_CORE1_SAFE=1)
+    endif()
+endif()
+
 add_definitions(-DPICO_PLATFORM=${PICO_PLATFORM})
 add_definitions(-DHAVE_CONFIG_H)
 
@@ -97,7 +113,12 @@ if(TSP)
     target_sources(${PROJECT_NAME} PRIVATE src/tsp_svc.c)
     target_include_directories(${PROJECT_NAME} BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/tsp_lwip)
     # Pico W (264KB) に合わせて表を小さく: Pico 側ソケット 20 (Z の 32 番号を全部同時には使わない)、送信の合計 4KB
-    target_compile_definitions(${PROJECT_NAME} PRIVATE TSP_ENABLE=1 TSP_NPS=20 TSP_TXPOOL=4096)
+    if(PICO_PLATFORM MATCHES "rp2350")
+        # Pico 2 W (520KB): 本来の大きさ (x68k net/tistack/README.md「Pico の RAM」)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE TSP_ENABLE=1 TSP_NPS=40 TSP_TXPOOL=12288 TSP_MEM_SIZE=20480)
+    else()
+        target_compile_definitions(${PROJECT_NAME} PRIVATE TSP_ENABLE=1 TSP_NPS=20 TSP_TXPOOL=4096)
+    endif()
 endif()
 
 # HDS が開けるまで Z の読み書きに NOT READY (04/01) を返して待たせ、接続は裏で繰り直し続ける (0 埋めを返さない)。

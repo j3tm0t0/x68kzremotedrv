@@ -101,9 +101,17 @@
 #define configMAX_API_CALL_INTERRUPT_PRIORITY   [dependent on processor and application]
 */
 
-#if FREE_RTOS_KERNEL_SMP // set by the RP2040 SMP port of FreeRTOS
+#ifndef P2W_CORES
+#define P2W_CORES                               1   /* RP2350: 1 = 1 コア (RP2040 版と同じ動き)、2 = SMP */
+#endif
+#if FREE_RTOS_KERNEL_SMP && PICO_RP2350 && P2W_CORES == 1
+/* RP2350 の port は FREE_RTOS_KERNEL_SMP を立てるが、1 コアで動かす (タスクが本当に同時に動く前提のコードではない) */
+#define configNUMBER_OF_CORES                   1
+#define configNUM_CORES                         1
+#elif FREE_RTOS_KERNEL_SMP // set by the RP2040 SMP port of FreeRTOS
 /* SMP port only */
 #define configNUM_CORES                         2
+#define configNUMBER_OF_CORES                   2   /* FreeRTOS 11 の名前 */
 #define configTICK_CORE                         0
 #define configRUN_MULTIPLE_PRIORITIES           1
 #define configUSE_CORE_AFFINITY                 1
@@ -137,6 +145,16 @@ to exclude the API function. */
 #define INCLUDE_xQueueGetMutexHolder            1
 
 /* A header file that defines trace macro can be included here. */
+
+#if PICO_RP2350
+/* RP2350 (Cortex-M33, TrustZone なし) の port が求める設定 */
+#define configENABLE_MPU                        0
+#define configUSE_PASSIVE_IDLE_HOOK             0
+#define configENABLE_TRUSTZONE                  0
+#define configRUN_FREERTOS_SECURE_ONLY          1
+#define configENABLE_FPU                        1
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY    16
+#endif
 
 #endif /* FREERTOS_CONFIG_H */
 

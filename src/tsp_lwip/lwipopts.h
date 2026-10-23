@@ -11,7 +11,11 @@
 #include "../../libsmb2/include/picow/lwipopts.h"
 
 #undef MEM_SIZE
+#ifdef TSP_MEM_SIZE
+#define MEM_SIZE                TSP_MEM_SIZE    /* Pico 2 W */
+#else
 #define MEM_SIZE                8192
+#endif
 #undef MEMP_NUM_TCP_SEG
 #define MEMP_NUM_TCP_SEG        40
 #undef MEMP_NUM_TCP_PCB
