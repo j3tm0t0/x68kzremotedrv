@@ -276,7 +276,8 @@ int vd_command(uint8_t *cbuf, uint8_t *rbuf)
         break;
       }
       printf("Performing wifi scan\n");
-      while (cyw43_wifi_scan_active(&cyw43_state)) {
+      /* 10 秒で打ち切る: Wi-Fi のつなぎ直しと重なると scan_active が下りないまま USB タスクが止まる (Charlie が PZL で見つけた) */
+      for (int i = 0; i < 50 && cyw43_wifi_scan_active(&cyw43_state); i++) {
         vTaskDelay(pdMS_TO_TICKS(200));
       }
       *res = wifi_scan_data;
