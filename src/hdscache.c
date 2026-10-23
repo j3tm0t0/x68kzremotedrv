@@ -35,6 +35,7 @@
 
 #include "main.h"
 #include "virtual_disk.h"
+#include "sdhds.h"
 
 //****************************************************************************
 // Static variables
@@ -77,13 +78,20 @@ int hds_cache_read(struct smb2_context *smb2, struct smb2fh *sfh, uint32_t lba, 
     }
 
     struct cache *c = &cache[cache_next];
-    uint64_t cur;
-    if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0)
-        return -1;
+    int sz;
     c->sects = 0;
-    int sz = smb2_read(smb2, sfh, c->data, DISK_CACHE_SIZE);
-    if (sz < 0)
-        return -1;
+    if (smb2 == NULL) {
+        /* SD カードの上の HDS (sfh は sdhds_open の handle) */
+        if ((sz = sdhds_read(sfh, lba, c->data, DISK_CACHE_SECTS)) < 0)
+            return -1;
+    } else {
+        uint64_t cur;
+        if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0)
+            return -1;
+        sz = smb2_read(smb2, sfh, c->data, DISK_CACHE_SIZE);
+        if (sz < 0)
+            return -1;
+    }
     c->sfh = sfh;
     c->smb2 = smb2;
     c->lba = lba;
@@ -103,6 +111,8 @@ int hds_cache_write(struct smb2_context *smb2, struct smb2fh *sfh, uint32_t lba,
         }
     }
 
+    if (smb2 == NULL)
+        return sdhds_write(sfh, lba, buf, 1) < 0 ? -1 : 0;
     uint64_t cur;
     if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0)
         return -1;

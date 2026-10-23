@@ -20,6 +20,10 @@ add_definitions(-DHAVE_CONFIG_H)
 
 # Build libsmb2 as a library
 add_subdirectory(${LIBSMB2_PATH} libsmb2)
+# SD カード (SPI) と FatFs: HDS を SD に置く (config の HDS を "sd:/ファイル名" にする)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/FatFs_SD/src FatFs_SD)
+# file_stream.c は fopencookie (GNU 拡張) を使う。使わないが、ライブラリがまとめて入れるのでここだけ GNU にする
+set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/lib/FatFs_SD/src/src/file_stream.c PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
 
 # Application, including in the FreeRTOS-Kernel
 add_executable(
@@ -33,6 +37,8 @@ add_executable(
 	src/smb2connect.c
         src/config_file.c
         src/netpipe.c
+        src/sdhds.c
+        src/hw_config.c
         src/usb_descriptors.c
         x68kserremote/service/remoteserv.c
         iconv/iconv_mini.c
@@ -140,6 +146,7 @@ target_link_libraries(${PROJECT_NAME}
         FreeRTOS-Kernel-Heap3
         tinyusb_device
         tinyusb_board
+        no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
 
 pico_add_extra_outputs(${PROJECT_NAME})

@@ -47,6 +47,7 @@
 #include "scsiremote.inc"
 #include "bootloader.inc"
 #include "hdsboot.inc"
+#include "sdhds.h"
 #include "settingui.inc"
 
 //****************************************************************************
@@ -184,9 +185,13 @@ static uint8_t imagedir[32 * 16];
 static uint8_t pscsiini[256];
 static int imagedir_init = false;
 
+static bool smb2_hds;                   /* SMB2 の上の HDS がある (無ければ Wi-Fi の接続を待たずに見せる) */
+
 static void vd_sync(void)
 {
     static bool synced = false;
+    if (!synced && !smb2_hds && !remoteboot)
+        synced = true;                  /* HDS が全部 SD カードの上: 待たない */
     if (!synced) {
 #if MSC_LOG
         uint32_t t = to_ms_since_boot(get_absolute_time());
@@ -232,6 +237,21 @@ int vd_init(void)
             if (strlen(config.hds[i]) == 0)
                 continue;
             diskinfo[id].type = DTYPE_HDS;
+            if (sdhds_is(config.hds[i])) {
+                /* SD カードの上の HDS: ここで開いて本当の大きさにする (Wi-Fi を待たない) */
+                void *h;
+                int64_t sz = sdhds_open(config.hds[i], &h);
+                if (sz < 0) {
+                    diskinfo[id].type = DTYPE_NOTUSED;
+                    continue;
+                }
+                diskinfo[id].sfh = h;
+                diskinfo[id].smb2 = NULL;
+                diskinfo[id].size = sz;
+                printf("HDS%u: %s size=%lld (SD)\n", i, config.hds[i], sz);
+                continue;
+            }
+            smb2_hds = true;
             diskinfo[id].size = 0xfffffe00; /* tentative size */
         }
     }

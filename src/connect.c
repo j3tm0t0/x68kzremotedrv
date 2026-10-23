@@ -42,6 +42,7 @@
 
 #include "config.h"
 #include "main.h"
+#include "sdhds.h"
 #include "virtual_disk.h"
 #include "config_file.h"
 #include "msclog.h"
@@ -187,6 +188,8 @@ static int vd_mount(void)
     for (int i = 0; i < countof(config.hds); i++, id++) {
         struct smb2_context *smb2;
         const char *shpath;
+        if (sdhds_is(config.hds[i]))
+            continue;                   /* SD カードの上の HDS は vd_init で開いてある */
         if ((smb2 = connect_smb2_path(config.hds[i], &shpath)) == NULL)
             continue;
 
@@ -233,6 +236,24 @@ static int vd_mount(void)
     sysstatus = STAT_CONFIGURED;
 }
 
+/* SD カードの HDS1 を Wi-Fi 越しに用意する: HDS0 と同じ SMB の共有の SDHDS_FETCH1 を、カードに無ければ写す。
+   USB タスクと libsmb2 の接続を分けるため、写すための接続を別に作って終わったら閉じる */
+static void sd_fetch_once(void)
+{
+    char share[64];
+    const char *slash = strchr(config.hds[0], '/');
+    struct smb2_context *smb2;
+    if (sysstatus < STAT_SMB2_CONNECTED || !slash || slash == config.hds[0] || sdhds_is(config.hds[0]) ||
+        (size_t)(slash - config.hds[0]) >= sizeof share)
+        return;
+    memcpy(share, config.hds[0], slash - config.hds[0]);
+    share[slash - config.hds[0]] = 0;
+    if ((smb2 = connect_smb2(share)) == NULL)
+        return;
+    sdhds_fetch(smb2, SDHDS_FETCH1, SDHDS_AUTO1);
+    disconnect_smb2(smb2);
+}
+
 //****************************************************************************
 // WiFi connection task
 //****************************************************************************
@@ -259,6 +280,7 @@ void connect_task(void *params)
         vd_mount();
     }
     msclog_mark("connect done, notify USB (sysstatus %d)", sysstatus);
+    sd_fetch_once();
 #if HID_KEYBOARD
     connect_finished = true;
 #endif
