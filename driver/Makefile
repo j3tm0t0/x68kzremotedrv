@@ -51,7 +51,7 @@ ifneq ($(DEBUG),)
 CFLAGS += -DDEBUG
 endif
 
-all: scsiremote.inc bootloader.inc hdsboot.inc bootwait.inc bootwait1.inc settingui.inc clrconfig.uf2 zrmtrescue.xdf
+all: scsiremote.inc bootloader.inc hdsboot.inc bootwait.inc bootwait_p2w.inc bootwait1.inc settingui.inc clrconfig.uf2 zrmtrescue.xdf
 
 uitest:
 	$(MAKE) CFLAGS_XTEST=-DXTEST clean settingui.x
@@ -78,6 +78,13 @@ hdsboot.bin: hdsboot.o
 	$(OBJCOPY) -O binary $< $@
 
 bootwait.o: bootwait_gen.S
+
+# Pico 2 W 用 (副題のボード名だけが違う): bootwait_gen_p2w.S は BW_BOARD='Raspberry Pi Pico 2 W' ./mkbootwait.py -o bootwait_gen_p2w.S
+bootwait_p2w.o: bootwait.S bootwait_gen_p2w.S
+	$(CC) $(ASFLAGS) -DBW_P2W -c -o $@ $<
+
+bootwait_p2w.bin: bootwait_p2w.o
+	$(OBJCOPY) -O binary $< $@
 
 bootwait.bin: bootwait.o
 	$(OBJCOPY) -O binary $< $@

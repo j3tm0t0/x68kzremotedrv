@@ -21,7 +21,12 @@
 
 #include "bootwait.h"
 #include "bootwait1.inc"                /* driver/bootwait1.S: 待ち IPL の前半 (HDS の LBA 2) */
+#if PICO_RP2350
+#include "bootwait_p2w.inc"             /* driver/bootwait.S -DBW_P2W: 後半 (副題が Raspberry Pi Pico 2 W のもの) */
+#define bootwait bootwait_p2w
+#else
 #include "bootwait.inc"                 /* driver/bootwait.S: 後半 (ID 6 の BW_STAGE2) */
+#endif
 
 #define HDR_MAGIC       "X6Z BootSnap v1"
 #define DATA_OFF        4096

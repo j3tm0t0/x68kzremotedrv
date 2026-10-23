@@ -653,6 +653,10 @@ m_none:
     .byte   0
     .even
 
+#ifdef BW_P2W
+#include "bootwait_gen_p2w.S"              /* 副題のボード名が Pico 2 W のもの */
+#else
 #include "bootwait_gen.S"
+#endif
 
     .end

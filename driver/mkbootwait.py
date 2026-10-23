@@ -18,7 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ---- 画面の配置 (1 始まりの行・桁。テキスト画面は 96 桁 x 32 行、1 文字 8x16 ドット) ----
 FRAME_TOP, FRAME_BOTTOM, FRAME_LEFT, FRAME_WIDTH = 2, 28, 3, 92   # 3-94 桁
 ART_ROW = 4                     # 紋章の上端の行 (ドットでは (ART_ROW-1)*16)。ここから 6 行 (96 ドット) に IOCS の字は出さない
-SUBTITLE = 'Pico Z Loader ･ Raspberry Pi Pico W / x68kzremotedrv'     # ･ は半角の中黒 (0xA5)。全角の ・ と空白 3 つは間が空きすぎた
+BOARD = os.environ.get('BW_BOARD', 'Raspberry Pi Pico W')     # ボードの名前 (Pico 2 W の版は BW_BOARD='Raspberry Pi Pico 2 W' で別に作る)
+SUBTITLE = 'Pico Z Loader ･ ' + BOARD + ' / x68kzremotedrv'     # ･ は半角の中黒 (0xA5)。全角の ・ と空白 3 つは間が空きすぎた
 LOGO = os.environ.get('BW_LOGO', 'center')     # center: 見た目の中央 / subtitle: 左端を副題の左端に / between: その中間
 LOGO_SHIFT = int(os.environ.get('BW_LOGO_SHIFT', '-20'))   # center のときさらに動かすドット数 (負で左。少し左が見た目に合った)
 ASPECT = 1.125                  # X68k の 768x512 を 4:3 に映すと 1 ドットは横の 1.125 倍の高さ: 絵は縦を 1/ASPECT にしておく
