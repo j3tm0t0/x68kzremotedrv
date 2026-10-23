@@ -293,6 +293,25 @@ static int vd_mount(void)
     sysstatus = STAT_CONFIGURED;
 }
 
+/* 設定画面の SETCONFIG で Wi-Fi か SMB をつなぎ直す前に、SMB の HDS とリモートドライブを外す。
+   外さないと古い接続が「開いている」まま残り、次の keepalive までリモートドライブが -14 を返していた
+   (Charlie が PZL で見つけた)。SD カードの HDS とユニットはそのまま。つなぎ直したら vd_mount で開き直す */
+static void vd_unmount_smb(void)
+{
+    for (int i = 0; i < 8; i++)
+        if (rootpath[i] != NULL && !sdhds_is(rootpath[i]))
+            rootpath[i] = NULL;
+    for (int i = 0; i < 7; i++)
+        if (diskinfo[i].type == DTYPE_HDS && diskinfo[i].smb2 != NULL) {
+            diskinfo[i].sfh = NULL;     /* USB タスクはこれを見て NOT READY で待たせる */
+            diskinfo[i].smb2 = NULL;
+        }
+    hds_cache_init();
+    disconnect_smb2_all();
+    if (sysstatus > STAT_WIFI_CONNECTED)
+        sysstatus = STAT_WIFI_CONNECTED;
+}
+
 /* SD カードの HDS1 を Wi-Fi 越しに用意する: HDS0 と同じ SMB の共有の SDHDS_FETCH1 を、カードに無ければ写す。
    USB タスクと libsmb2 の接続を分けるため、写すための接続を別に作って終わったら閉じる */
 static void sd_fetch_once(void)
@@ -373,7 +392,12 @@ void connect_task(void *params)
         if (!(nvalue & CONNECT_WAIT))
             continue;
         xSemaphoreTake(remote_sem, portMAX_DELAY);
-        connection(nvalue & CONNECT_MASK);
+        int mode = nvalue & CONNECT_MASK;
+        if (mode == CONNECT_WIFI || mode == CONNECT_SMB2)
+            vd_unmount_smb();
+        connection(mode);
+        if ((mode == CONNECT_WIFI || mode == CONNECT_SMB2) && sysstatus >= STAT_SMB2_CONNECTED)
+            vd_mount();
         xSemaphoreGive(remote_sem);
     }
 }
