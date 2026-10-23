@@ -43,6 +43,7 @@
 #include "config.h"
 #include "main.h"
 #include "sdhds.h"
+#include "pico/aon_timer.h"
 #include "virtual_disk.h"
 #include "config_file.h"
 #include "msclog.h"
@@ -134,6 +135,15 @@ static void connection(int mode)
         time_t tt = (time_t)((boottime + to_us_since_boot(get_absolute_time())) / 1000000);
         struct tm *tm = localtime(&tt);
         printf("Boottime UTC %04d/%02d/%02d %02d:%02d:%02d\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+        {
+            /* SD カード (FatFs) のファイルの時刻 (get_fattime) と time() は always-on タイマー (sdhds.c の sdc_init で 0 から動かしてある) */
+            static bool set;
+            struct timespec ts = { .tv_sec = tt, .tv_nsec = 0 };
+            if (!set) {
+                aon_timer_set_time(&ts);
+                set = true;
+            }
+        }
 
         disconnect_smb2(smb2ipc);
 
@@ -170,6 +180,8 @@ static int vd_mount(void)
     for (int i = 0; i < remoteunit; i++) {
         struct smb2_context *smb2;
         const char *shpath;
+        if (sdhds_is(config.remote[i]))
+            continue;                   /* SD カードのユニットは vd_init で用意してある */
         if ((smb2 = connect_smb2_path(config.remote[i], &shpath)) == NULL)
             continue;
 

@@ -50,6 +50,7 @@ int lwip_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 #include "config_file.h"
 #include "remoteserv.h"
 #include "fileop.h"
+#include "sdhds.h"
 
 //****************************************************************************
 // Callback functions
@@ -189,7 +190,7 @@ int vd_command(uint8_t *cbuf, uint8_t *rbuf)
         res->hour = tm->tm_hour;
         res->min = tm->tm_min;
         res->sec = tm->tm_sec;
-        res->unit = atoi(config.remoteunit);
+        res->unit = vd_remoteunit();
       }
       res->version = PROTO_VERSION;
       strncpy(res->verstr, GIT_REPO_VERSION, sizeof(res->verstr) - 1);
@@ -325,6 +326,9 @@ int vd_command(uint8_t *cbuf, uint8_t *rbuf)
       smb2_enum_finished = false;
       smb2_enum_ptr = NULL;
       disconnect_smb2(smb2ipc);
+      /* SD カードを "sd:" という共有のように見せる (設定画面で HDS や REMOTE の欄に sd:/... を選べるように) */
+      if (res->status == 0 && res->n_items < 16 && sdc_mount())
+        strcpy((char *)res->share[res->n_items++], "sd:");
       break;
     }
 
@@ -332,7 +336,7 @@ int vd_command(uint8_t *cbuf, uint8_t *rbuf)
     {
       struct cmd_smb2_list *cmd = (struct cmd_smb2_list *)cbuf;
       struct res_smb2_list *res = (struct res_smb2_list *)rbuf;
-      struct smb2_context *smb2;
+      struct smb2_context *smb2 = NULL;
 
       rsize = sizeof(*res);
       memset(res, 0, rsize);
@@ -349,20 +353,29 @@ int vd_command(uint8_t *cbuf, uint8_t *rbuf)
 
       res->status = -1;
 
-      if ((smb2 = connect_smb2(cmd->share)) == NULL) {
+      bool sd = strcmp((char *)cmd->share, "sd:") == 0;     /* SD カード (CMD_SMB2_ENUM が足した共有) */
+      if (!sd && (smb2 = connect_smb2(cmd->share)) == NULL) {
         break;
       }
 
-      struct smb2dir *dir;
+      struct smb2dir *dir = NULL;
+      uint64_t sddir = 0;
       struct smb2dirent *ent;
       char *p = res->list;
       char *q = &res->list[sizeof(res->list)];
 
       res->status = -2;
 
-      dir = smb2_opendir(smb2, path);
-      if (dir != NULL) {
-        while ((ent = smb2_readdir(smb2, dir))) {
+      if (sd) {
+        char sp[264];
+        int err;
+        snprintf(sp, sizeof sp, "sd:/%s", path);
+        sddir = sdfs_opendir(sp, &err);
+      } else {
+        dir = smb2_opendir(smb2, path);
+      }
+      if (sd ? sddir != 0 : dir != NULL) {
+        while ((ent = sd ? sdfs_readdir(sddir) : smb2_readdir(smb2, dir))) {
           if (ent->st.smb2_type == SMB2_TYPE_DIRECTORY ||
               ent->st.smb2_type == SMB2_TYPE_FILE) {
             if (strcmp(ent->name, ".") == 0 || strcmp(ent->name, "..") == 0)
@@ -404,12 +417,16 @@ int vd_command(uint8_t *cbuf, uint8_t *rbuf)
             }
           }
         }
-        smb2_closedir(smb2, dir);
+        if (sd)
+          sdfs_closedir(sddir);
+        else
+          smb2_closedir(smb2, dir);
         *p++ = '\0';
         res->status = 0;
       }
 
-      disconnect_smb2(smb2);
+      if (!sd)
+        disconnect_smb2(smb2);
       break;
     }
 

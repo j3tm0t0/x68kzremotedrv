@@ -38,6 +38,7 @@ add_executable(
         src/config_file.c
         src/netpipe.c
         src/sdhds.c
+        src/sdfs.c
         src/hw_config.c
         src/usb_descriptors.c
         x68kserremote/service/remoteserv.c

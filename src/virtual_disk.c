@@ -48,6 +48,7 @@
 #include "bootloader.inc"
 #include "hdsboot.inc"
 #include "sdhds.h"
+#include "sdfs.h"
 #include "settingui.inc"
 
 //****************************************************************************
@@ -205,6 +206,12 @@ static void vd_sync(void)
     }
 }
 
+/* Z に見せるリモートドライブのユニット数 (今は config.remoteunit と同じ。SD のユニットも REMOTE の欄で数える) */
+int vd_remoteunit(void)
+{
+    return remoteunit;
+}
+
 int vd_init(void)
 {
     uint32_t nvalue;
@@ -212,6 +219,7 @@ int vd_init(void)
     int len;
 
     setenv("TZ", config.tz, true);
+    sdc_init();
 
     remoteunit = atoi(config.remoteunit);
     remoteboot = atoi(config.remoteboot);
@@ -253,6 +261,19 @@ int vd_init(void)
             }
             smb2_hds = true;
             diskinfo[id].size = 0xfffffe00; /* tentative size */
+        }
+
+        /* SD カードをリモートドライブのユニットにする (SMB のユニットの後ろ = B: の次の C:。SCSI ID は増やさないので
+           B: はずれない)。REMOTE の欄に "sd:/..." と書いたユニットだけ (明示したときだけ): 自動で足すと、後ろの
+           ドライブ名が 1 つずつ下がる (Z の内蔵 FD は C: D: から D: E: に)。Wi-Fi を待たない */
+        for (int i = 0; i < remoteunit && i < 8; i++) {
+            if (!sdhds_is(config.remote[i]))
+                continue;
+            struct smb2_stat_64 st;
+            if (sdfs_stat(config.remote[i], &st) == 0 && st.smb2_type == SMB2_TYPE_DIRECTORY) {
+                rootpath[i] = config.remote[i];
+                printf("REMOTE%u: %s (SD)\n", i, config.remote[i]);
+            }
         }
     }
 

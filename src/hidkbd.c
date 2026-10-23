@@ -39,6 +39,7 @@
 #include "bootwait.h"
 #include "hidkbd_cmd.h"
 #include "hidkbd.h"
+#include "sdhds.h"
 
 #define HIDKBD_PORT     6869
 #define READY_TIMEOUT   1000            /* Z が HID を読みに来ないまま (ms) なら諦める */
@@ -87,7 +88,13 @@ static void on_udp(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_add
     while (n > 0 && (w[n - 1] == '\n' || w[n - 1] == '\r' || w[n - 1] == ' '))
         n--;
     w[n] = '\0';
-    if (strcmp(w, "status") == 0) {
+    if (strncmp(w, "sdcopy", 6) == 0) {
+        /* 長く掛かるので USB タスクには回さず、sdcopy のタスクに渡してすぐ返事をする */
+        char a[400];
+        int m = pbuf_copy_partial(p, a, sizeof a - 1, 0);
+        a[m] = '\0';
+        sendto_locked(sdcopy_request(a + 6), addr, port);
+    } else if (strcmp(w, "status") == 0) {
         st_from = *addr;
         st_port = port;
         __dmb();
@@ -158,8 +165,10 @@ static int status_line(char *s, int size)
     for (int i = 0; i < countof(config.hds); i++, id++)
         if (config.hds[i][0] != '\0' && n < size)
             n += snprintf(s + n, size - n, " hds%d=%s", i, diskinfo[id].sfh != NULL ? "open" : "closed");
-    for (int i = 0; i < atoi(config.remoteunit) && i < 8 && n < size; i++)
+    for (int i = 0; i < vd_remoteunit() && i < 8 && n < size; i++)
         n += snprintf(s + n, size - n, " remote%d=%s", i, rootpath[i] != NULL ? "ok" : "none");
+    if (n < size)
+        n += sdcopy_status(s + n, size - n);
     uint32_t done;
     const char *acc = accel_state(&done);
     extern char __HeapLimit;
@@ -201,6 +210,7 @@ static void status_task(void *params)
 void hidkbd_init(void)
 {
     xTaskCreate(status_task, "HidKbdStatus", 768, NULL, 1, &st_th);
+    sdcopy_init();
     cyw43_arch_lwip_begin();
     kpcb = udp_new();
     if (kpcb != NULL) {

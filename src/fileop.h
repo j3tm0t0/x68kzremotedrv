@@ -37,6 +37,11 @@
 
 #include "main.h"
 #include "iconv_mini.h"
+#include "sdfs.h"
+
+/* rootpath が "sd:" のユニットは SD カード (sdfs.c) で答える (ハンドルの操作は sdfs.h の印で) */
+extern const char *rootpath[8];
+#define SDU(unit)         sdfs_is(rootpath[unit])
 
 //****************************************************************************
 // Data types
@@ -130,6 +135,7 @@ static inline int FUNC_CHMOD(int unit, int *err, const char *path, int mode)
 
 static inline int FUNC_STAT(int unit, int *err, const char *path, TYPE_STAT *st)
 {
+  if (SDU(unit)) { int r = sdfs_stat(path, st); if (err) *err = -r; return r; }
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
   int r = smb2_stat(smb2, shpath, st);
@@ -139,6 +145,7 @@ static inline int FUNC_STAT(int unit, int *err, const char *path, TYPE_STAT *st)
 }
 static inline int FUNC_MKDIR(int unit, int *err, const char *path)
 {
+  if (SDU(unit)) { int r = sdfs_mkdir(path); if (err) *err = -r; return r; }
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
   int r = smb2_mkdir(smb2, shpath);
@@ -148,6 +155,7 @@ static inline int FUNC_MKDIR(int unit, int *err, const char *path)
 }
 static inline int FUNC_RMDIR(int unit, int *err, const char *path)
 {
+  if (SDU(unit)) { int r = sdfs_rmdir(path); if (err) *err = -r; return r; }
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
   int r = smb2_rmdir(smb2, shpath);
@@ -157,6 +165,7 @@ static inline int FUNC_RMDIR(int unit, int *err, const char *path)
 }
 static inline int FUNC_RENAME(int unit, int *err, const char *pathold, const char *pathnew)
 {
+  if (SDU(unit)) { int r = sdfs_rename(pathold, pathnew); if (err) *err = -r; return r; }
   const char *shpath;
   const char *shpath2;
   struct smb2_context *smb2 = path2smb2(pathold, &shpath);
@@ -168,6 +177,7 @@ static inline int FUNC_RENAME(int unit, int *err, const char *pathold, const cha
 }
 static inline int FUNC_UNLINK(int unit, int *err, const char *path)
 {
+  if (SDU(unit)) { int r = sdfs_unlink(path); if (err) *err = -r; return r; }
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
   int r = smb2_unlink(smb2, shpath);
@@ -182,6 +192,7 @@ static inline int FUNC_UNLINK(int unit, int *err, const char *path)
 
 static inline TYPE_DIR FUNC_OPENDIR(int unit, int *err, const char *path)
 {
+  if (SDU(unit)) { int e; TYPE_DIR d = sdfs_opendir(path, &e); if (err) *err = e; return d; }
   union smb2dd dir = { .dd = DIR_BADDIR };
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
@@ -195,6 +206,7 @@ static inline TYPE_DIR FUNC_OPENDIR(int unit, int *err, const char *path)
 }
 static inline TYPE_DIRENT *FUNC_READDIR(int unit, int *err, TYPE_DIR dir)
 {
+  if (SDFS_IS_HANDLE(dir)) { if (err) *err = 0; return sdfs_readdir(dir); }
   TYPE_DIRENT *d = smb2_readdir(dir2smb2(dir), dir2dir(dir));
   if (err)
     *err = nterror_to_errno(smb2_get_nterror(dir2smb2(dir)));
@@ -202,6 +214,7 @@ static inline TYPE_DIRENT *FUNC_READDIR(int unit, int *err, TYPE_DIR dir)
 }
 static inline int FUNC_CLOSEDIR(int unit, int *err, TYPE_DIR dir)
 { 
+  if (SDFS_IS_HANDLE(dir)) return sdfs_closedir(dir);
   smb2_closedir(dir2smb2(dir), dir2dir(dir));
   return 0;
 }
@@ -212,6 +225,7 @@ static inline int FUNC_CLOSEDIR(int unit, int *err, TYPE_DIR dir)
 
 static inline TYPE_FD FUNC_OPEN(int unit, int *err, const char *path, int flags)
 {
+  if (SDU(unit)) { int e; TYPE_FD f = sdfs_open(path, flags, &e); if (err) *err = e; return f; }
   union smb2fd fd = { .fd = FD_BADFD };
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
@@ -225,6 +239,7 @@ static inline TYPE_FD FUNC_OPEN(int unit, int *err, const char *path, int flags)
 }
 static inline int FUNC_CLOSE(int unit, int *err, TYPE_FD fd)
 {
+  if (SDFS_IS_HANDLE(fd)) { int r = sdfs_close(fd); if (err) *err = -r; return r; }
   int r = smb2_close(fd2smb2(fd), fd2sfh(fd));
   if (err)
     *err = -r;
@@ -232,6 +247,7 @@ static inline int FUNC_CLOSE(int unit, int *err, TYPE_FD fd)
 }
 static inline ssize_t FUNC_READ(int unit, int *err, TYPE_FD fd, void *buf, size_t count)
 {
+  if (SDFS_IS_HANDLE(fd)) { ssize_t r = sdfs_read(fd, buf, count); if (err) *err = -r; return r; }
   ssize_t r = smb2_read(fd2smb2(fd), fd2sfh(fd), buf, count);
   if (err)
     *err = -r;
@@ -239,6 +255,7 @@ static inline ssize_t FUNC_READ(int unit, int *err, TYPE_FD fd, void *buf, size_
 }
 static inline ssize_t FUNC_WRITE(int unit, int *err, TYPE_FD fd, const void *buf, size_t count)
 {
+  if (SDFS_IS_HANDLE(fd)) { ssize_t r = sdfs_write(fd, buf, count); if (err) *err = -r; return r; }
   ssize_t res = 0;
   while (count > 0) {
     int c = count > 1024 ? 1024 : count;
@@ -259,6 +276,7 @@ static inline ssize_t FUNC_WRITE(int unit, int *err, TYPE_FD fd, const void *buf
 }
 static inline int FUNC_FTRUNCATE(int unit, int *err, TYPE_FD fd, off_t length)
 {
+  if (SDFS_IS_HANDLE(fd)) { int r = sdfs_ftruncate(fd, length); if (err) *err = -r; return r; }
   int r = smb2_ftruncate(fd2smb2(fd), fd2sfh(fd), length);
   if (err)
     *err = -r;
@@ -266,6 +284,7 @@ static inline int FUNC_FTRUNCATE(int unit, int *err, TYPE_FD fd, off_t length)
 }
 static inline off_t FUNC_LSEEK(int unit, int *err, TYPE_FD fd, off_t offset, int whence)
 {
+  if (SDFS_IS_HANDLE(fd)) { off_t r = sdfs_lseek(fd, offset, whence); if (err) *err = -r; return r; }
   uint64_t cur;
   off_t r = smb2_lseek(fd2smb2(fd), fd2sfh(fd), offset, whence, &cur);
   if (err)
@@ -274,6 +293,7 @@ static inline off_t FUNC_LSEEK(int unit, int *err, TYPE_FD fd, off_t offset, int
 }
 static inline int FUNC_FSTAT(int unit, int *err, TYPE_FD fd, TYPE_STAT *st)
 {
+  if (SDFS_IS_HANDLE(fd)) { int r = sdfs_fstat(fd, st); if (err) *err = -r; return r; }
   int r = smb2_fstat(fd2smb2(fd), fd2sfh(fd), st);
   if (err)
     *err = -r;
@@ -282,6 +302,7 @@ static inline int FUNC_FSTAT(int unit, int *err, TYPE_FD fd, TYPE_STAT *st)
 
 static inline int FUNC_FILEDATE(int unit, int *err, TYPE_FD fd, uint16_t time, uint16_t date)
 {
+  if (SDFS_IS_HANDLE(fd)) { if (err) *err = 0; return 0; }   /* FatFs の FF_USE_CHMOD が 0 なので日付は変えない */
   struct tm tm;
   tm.tm_sec = (time << 1) & 0x3f;
   tm.tm_min = (time >> 5) & 0x3f;
@@ -307,6 +328,7 @@ static inline int FUNC_FILEDATE(int unit, int *err, TYPE_FD fd, uint16_t time, u
 
 static inline int FUNC_STATFS(int unit, int *err, const char *path, uint64_t *total, uint64_t *free)
 {
+  if (SDU(unit)) return sdfs_statfs(path, total, free);
   struct smb2_statvfs sf;
   const char *shpath;
   struct smb2_context *smb2 = path2smb2(path, &shpath);
