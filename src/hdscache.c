@@ -107,7 +107,8 @@ int hds_cache_write(struct smb2_context *smb2, struct smb2fh *sfh, uint32_t lba,
         struct cache *c = &cache[i];
         if (c->sfh == sfh && c->smb2 == smb2 && lba >= c->lba && lba < c->lba + c->sects) {
             memcpy(&c->data[(lba - c->lba) * SECTOR_SIZE], buf, SECTOR_SIZE);
-            break;
+            /* break しない: 組は読み損ねた LBA から始まるので重なることがある (起動の LBA 0x20/0x21 -> 2/3 の
+               差し替えなど)。1 つ目だけ直すと、それが追い出されたあと別の組から古い中身を返す (PZL で見つかった) */
         }
     }
 
