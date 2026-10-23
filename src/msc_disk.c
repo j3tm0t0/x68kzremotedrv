@@ -50,9 +50,11 @@ void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8], uint8_t product_id[16
   const char pid[] = "Remote Drive Mass Storage";
   const char rev[] = "1.0";
 
-  memcpy(vendor_id  , vid, strlen(vid));
-  memcpy(product_id , pid, strlen(pid));
-  memcpy(product_rev, rev, strlen(rev));
+  /* 欄の長さ (8 / 16 / 4) を超えて写さない。pid は 25 文字あり、以前は product_id から 9 バイトはみ出していた
+     (TinyUSB 0.18 では応答が tud_task のスタックにあり、はみ出しがタスクの保存したレジスタを壊して落ちた) */
+  memcpy(vendor_id  , vid, strlen(vid) < 8 ? strlen(vid) : 8);
+  memcpy(product_id , pid, strlen(pid) < 16 ? strlen(pid) : 16);
+  memcpy(product_rev, rev, strlen(rev) < 4 ? strlen(rev) : 4);
 }
 
 // Invoked when received Test Unit Ready command.
