@@ -597,7 +597,12 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
                     memset(b->buf, 0, sizeof(b->buf));
                 } else {
                     b->header.page = page;
-                    memcpy(b->buf, &vdbuf_read[page * (512 - 16)], sizeof(b->buf));
+                    if (page < (int)(sizeof(vdbuf_read) / (512 - 16))) {
+                        memcpy(b->buf, &vdbuf_read[page * (512 - 16)], sizeof(b->buf));
+                    } else {
+                        // 従来方式で数えすぎた: バッファの外は読まない
+                        memset(b->buf, 0, sizeof(b->buf));
+                    }
                 }
                 return 0;
             }
