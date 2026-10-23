@@ -156,5 +156,10 @@ to exclude the API function. */
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY    16
 #endif
 
+/* FreeRTOS 11 (raspberrypi/FreeRTOS-Kernel、pico-sdk 2.x と組むとき) が求める。V10 では使われない */
+#ifndef configUSE_PASSIVE_IDLE_HOOK
+#define configUSE_PASSIVE_IDLE_HOOK             0
+#endif
+
 #endif /* FREERTOS_CONFIG_H */
 

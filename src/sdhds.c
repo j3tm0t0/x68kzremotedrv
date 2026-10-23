@@ -27,7 +27,7 @@
 
 static FATFS fs;
 static bool mounted;
-static FIL files[SDHDS_MAX];
+static FIL *files[SDHDS_MAX];           /* 開くときに確保 (Pico W の RAM: 使わなければ 0) */
 static char names[SDHDS_MAX][64];       /* HDS として開いているファイル (sdcopy が上書きしないように) */
 static int nfiles;
 
@@ -94,12 +94,14 @@ int64_t sdhds_open(const char *path, void **handle)
     if (!sdc_mount())
         return -1;
     sdc_lock();
-    if (nfiles < SDHDS_MAX) {
-        FIL *f = &files[nfiles];
+    FIL *f;
+    if (nfiles < SDHDS_MAX && (f = malloc(sizeof *f)) != NULL) {
         const char *name = path + 3;        /* "sd:" の後ろ */
         if ((fr = f_open(f, name, FA_READ | FA_WRITE)) != FR_OK) {
             printf("SD: %s open failed (%d)\n", name, fr);
+            free(f);
         } else {
+            files[nfiles] = f;
             snprintf(names[nfiles], sizeof names[0], "%s", name);
             nfiles++;
             *handle = f;
@@ -156,7 +158,11 @@ static volatile uint64_t cp_done, cp_total;
 
 static int64_t sd_copy(struct smb2_context *smb2, const char *smbpath, const char *sdpath, const char **why)
 {
+#if PICO_RP2040
+    size_t bsize = 8192;                /* Pico W は RAM が少ない */
+#else
     size_t bsize = 32768;
+#endif
     uint8_t *buf = malloc(bsize);
     char tmp[128];
     FIL *f = NULL;
@@ -274,17 +280,14 @@ int64_t sdhds_fetch(struct smb2_context *smb2, const char *smbpath, const char *
  * sdcopy <smb-path> <sd-path>: UDP 6869 から。<smb-path> は config の HDS と同じ「共有名/パス」、<sd-path> は "/..." か "sd:/..."。
  * 専用のタスクが別の SMB の接続で写す (USB タスクの接続とは分ける)。様子は status の sdcopy=... に出る。
  */
-static TaskHandle_t cp_th;
 static char cp_src[256], cp_dst[128];
 static volatile enum { CP_IDLE, CP_RUN, CP_DONE, CP_ERR } cp_state;
 static const char *cp_why = "";
 
+/* 写すたびに作り、終わったら消す (待っている間のスタック 8KB を Pico W で持たないため) */
 static void sdcopy_task(void *params)
 {
-    for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (cp_state != CP_RUN)
-            continue;
+    {
         const char *why = "smb-connect";
         int64_t r = -1;
         char share[64];
@@ -308,21 +311,19 @@ static void sdcopy_task(void *params)
         __sync_synchronize();
         cp_state = r < 0 ? CP_ERR : CP_DONE;
     }
+    vTaskDelete(NULL);
 }
 
 void sdcopy_init(void)
 {
-    xTaskCreate(sdcopy_task, "SdCopy", 2048, NULL, 1, &cp_th);
 }
 
 /* lwIP のスレッドから。args は "sdcopy " の後ろ。返事の文字列を返す */
 const char *sdcopy_request(const char *args)
 {
     char src[sizeof cp_src], dst[sizeof cp_dst];
-    if (cp_th == NULL)
-        return "err sdcopy unavailable";
     if (cp_state == CP_RUN)
-        return "err sdcopy busy";
+        return "err sdcopy busy";             /* 前のタスクは CP_RUN を下ろしてから自分を消す */
     if (sscanf(args, "%255s %127s", src, dst) != 2)
         return "err usage: sdcopy <share/path> <sd-path>";
     const char *d = strncmp(dst, "sd:", 3) == 0 ? dst + 3 : dst;
@@ -335,7 +336,11 @@ const char *sdcopy_request(const char *args)
     cp_done = cp_total = 0;
     __sync_synchronize();
     cp_state = CP_RUN;
-    xTaskNotifyGive(cp_th);
+    if (xTaskCreate(sdcopy_task, "SdCopy", 2048, NULL, 1, NULL) != pdPASS) {
+        cp_why = "nomem";
+        cp_state = CP_ERR;
+        return "err sdcopy nomem";
+    }
     return "ok sdcopy started";
 }
 
