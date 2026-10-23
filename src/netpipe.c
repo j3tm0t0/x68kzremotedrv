@@ -10,6 +10,7 @@
  *   Z へ:   [長さ 2][空き 14][IP パケット][偶数にそろえる詰め物]  (空きは slip.sys が Ethernet の見出しを書く場所)
  *   Z から: [長さ 2][IP パケット][偶数にそろえる詰め物]
  *   中身の先頭が ACCEL_MARK (0xA5) のレコードは IP ではなく暗号アクセラレータの要求 / 応答 (accel.c、accel_proto.h)。
+ *   中身の先頭が TSP_MARK (0xA6) のレコードは tis.x -p のソケット要求 / 応答 (tsp_svc.c、tsp.h)。応答はその交換の中で作る。
  *
  *   ブリッジ (要求の +12 に Z の IP アドレスがあるとき):
  *     Pico が Z の IP アドレスを代わりに名乗る (Z 宛ての ARP 要求に Pico の MAC で答える)。
@@ -42,6 +43,14 @@
 #include "netpipe.h"
 #include "accel_proto.h"
 #include "accel.h"
+#if TSP_ENABLE
+#include "pico/rand.h"
+#include "tsp.h"
+#include "tsp_svc.h"
+/* この交換の Z の要求に入っていた TSP レコード (reqbuf の中を指す。np_exchange の間だけ) */
+static const uint8_t *tsp_req;
+static int tsp_reqlen;
+#endif
 
 #define NETPIPE_PORT    6868
 #define NETPIPE_MAGIC   0x58364e50      /* "X6NP" (big endian) */
@@ -375,6 +384,12 @@ static void bridge_out_rec(const uint8_t *s, int n)
         int tot = len >= 20 ? (pkt[2] << 8) | pkt[3] : 0;
         if (pkt[0] == ACCEL_MARK)
             accel_submit(pkt, len);     /* 暗号アクセラレータの要求 (IPv4 のバージョンと重ならない) */
+#if TSP_ENABLE
+        else if (pkt[0] == TSP_MARK && len >= TSP_HDR) {
+            tsp_req = pkt;              /* tis.x のソケット要求: 応答を作るところ (np_exchange) で処理する */
+            tsp_reqlen = len;
+        }
+#endif
         else if ((pkt[0] >> 4) == 4 && tot >= 20 && tot <= len)
             bridge_send(pkt, tot);
         s += rl;
@@ -436,6 +451,10 @@ static bool np_open(void)
         udp_recv(pcb, np_recv, NULL);
     }
     cyw43_arch_lwip_end();
+#if TSP_ENABLE
+    tsp_init(get_rand_32() | 1);        /* 起動ごとに違う epoch (Z は変わったら Pico 側のソケットを捨てる) */
+    printf("netpipe: tsp (tis.x -p sockets) ready\n");
+#endif
     if (!ipaddr_aton(config.smb2_server, &peer))
         ip_addr_set_zero(&peer);
     if (pcb != NULL)
@@ -456,9 +475,12 @@ static void np_exchange(void)
     int rxmax = be16(rq->rxmax);
     uint32_t z = rq->stat;              /* ネットワークバイトオーダーのまま (X68000 もビッグエンディアン) */
     bool r = z != 0 && rq->magic == be32(NETPIPE_MAGIC_R);
-    int n = 0;
+    int n = 0, tmore = 0;
 #if HID_KEYBOARD
     netpipe_xchg++;
+#endif
+#if TSP_ENABLE
+    tsp_reqlen = 0;
 #endif
 
     if (np_open()) {
@@ -511,6 +533,22 @@ static void np_exchange(void)
                 memset(resbuf + 18, 0, REC_HDR - 2);
                 n = REC_HDR + ((al + 1) & ~1);
             }
+#if TSP_ENABLE
+            /* tis.x のソケット応答 (要求 1 個に 1 個)。lwIP の呼び出しは tsp_exchange の中で cyw43_arch_lwip_begin/end
+               (= lwIP の core lock) に囲まれる。lwIP のコールバックは tcpip のタスクで同じロックの中なので入れ子にならない */
+            if (tsp_reqlen && rxmax - n > REC_HDR + TSP_HDR) {
+                int room = rxmax - n - REC_HDR;
+                int tl = tsp_exchange(tsp_req, tsp_reqlen, resbuf + 16 + n + REC_HDR, room < TSP_RES_MAX ? room : TSP_RES_MAX, &tmore);
+                if (tl > 0) {
+                    resbuf[16 + n] = tl >> 8;
+                    resbuf[16 + n + 1] = tl;
+                    memset(resbuf + 16 + n + 2, 0, REC_HDR - 2);
+                    if (tl & 1)
+                        resbuf[16 + n + REC_HDR + tl] = 0;
+                    n += REC_HDR + ((tl + 1) & ~1);
+                }
+            }
+#endif
             /* レコードを途中で切らない */
             while (avail >= REC_HDR) {
                 int len = (rxring[t % RXRING] << 8) | rxring[(t + 1) % RXRING];
@@ -532,7 +570,7 @@ static void np_exchange(void)
     rs->magic = rq->magic;
     rs->seq = rq->seq;
     rs->len = be16(n);
-    rs->rxmax = be16((uint16_t)(rx_head - rx_tail));
+    rs->rxmax = be16((uint16_t)(rx_head - rx_tail + tmore));   /* npd.x は 0 でなければすぐ次の交換をする */
     rs->stat = be32((st_tozf << 16) | (st_drop & 0xffff));
 }
 

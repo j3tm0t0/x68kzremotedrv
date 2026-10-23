@@ -83,6 +83,16 @@ if(HID_KEYBOARD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HID_KEYBOARD=1 MEMP_NUM_UDP_PCB=6)
 endif()
 
+# tis.x -p (x68k リポジトリの net/tistack) のソケット窓口 (src/tsp_svc.c): netpipe の 0xA6 のレコードで Z のソケット操作を
+# Pico の lwIP で行う (TCP / UDP / DNS)。-DTSP=OFF で外す。lwIP の大きさは src/tsp_lwip/lwipopts.h
+option(TSP "Socket service for tis.x -p (TSP 0xA6 records over netpipe)" ON)
+if(TSP)
+    target_sources(${PROJECT_NAME} PRIVATE src/tsp_svc.c)
+    target_include_directories(${PROJECT_NAME} BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/tsp_lwip)
+    # Pico W (264KB) に合わせて表を小さく: Pico 側ソケット 20 (Z の 32 番号を全部同時には使わない)、送信の合計 4KB
+    target_compile_definitions(${PROJECT_NAME} PRIVATE TSP_ENABLE=1 TSP_NPS=20 TSP_TXPOOL=4096)
+endif()
+
 # HDS が開けるまで Z の読み書きに NOT READY (04/01) を返して待たせ、接続は裏で繰り直し続ける (0 埋めを返さない)。
 # -DBOOTWAIT=OFF で元の動き (最初の HDS の読み込みで接続を待ち、失敗なら 0 埋め) に戻す
 option(BOOTWAIT "Answer NOT READY until the HDS is open instead of blocking / returning zeros" ON)
