@@ -176,8 +176,16 @@ target_link_libraries(${PROJECT_NAME}
         tinyusb_device
         tinyusb_board
 )
+# SD カードの SPI0 のピン: header (既定、GP18 SCK / GP19 MOSI / GP20 MISO / GP21 CS、アンテナの側) か
+# usb (GP2 SCK / GP3 MOSI / GP4 MISO / GP5 CS、USB の側。ケースで SD を Pico の USB の端の下に重ねるとき)
+set(SD_PINS "header" CACHE STRING "SD card SPI0 pins: header (GP18-21) or usb (GP2-5)")
 if(SD_CARD)
     target_sources(${PROJECT_NAME} PRIVATE src/hw_config.c)
+    if(SD_PINS STREQUAL "usb")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE SD_SCK=2 SD_MOSI=3 SD_MISO=4 SD_CS=5)
+    elseif(NOT SD_PINS STREQUAL "header")
+        message(FATAL_ERROR "SD_PINS must be header or usb (got ${SD_PINS})")
+    endif()
     target_compile_definitions(${PROJECT_NAME} PRIVATE SD_CARD=1)
     target_link_libraries(${PROJECT_NAME} no-OS-FatFS-SD-SDIO-SPI-RPi-Pico)
 else()

@@ -1,7 +1,8 @@
 /*
  * hw_config.c -- SD カード (SPI 接続) の配線 (no-OS-FatFS-SD-SDIO-SPI-RPi-Pico 用)
  *
- *   SD の基板    Pico W / Pico 2 W (既定。CMake の SD_SCK / SD_MOSI / SD_MISO / SD_CS / SD_SPI_HZ で変えられる)
+ *   SD の基板    Pico W / Pico 2 W (既定。cmake -DSD_PINS=usb なら GP2 SCK / GP3 MOSI / GP4 MISO / GP5 CS。
+ *                ほかの番号は SD_SCK / SD_MOSI / SD_MISO / SD_CS / SD_SPI_HZ を定義する)
  *   3V3          36 番ピン (3V3 OUT)
  *   GND          38 番ピン
  *   SCK          GP18 (24 番ピン)
