@@ -86,11 +86,15 @@ int hds_cache_read(struct smb2_context *smb2, struct smb2fh *sfh, uint32_t lba, 
             return -1;
     } else {
         uint64_t cur;
-        if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0)
+        if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0) {
+            smb_lost("hds lseek");
             return -1;
+        }
         sz = smb2_read(smb2, sfh, c->data, DISK_CACHE_SIZE);
-        if (sz < 0)
+        if (sz < 0) {
+            smb_lost("hds read");
             return -1;
+        }
     }
     c->sfh = sfh;
     c->smb2 = smb2;
@@ -115,10 +119,14 @@ int hds_cache_write(struct smb2_context *smb2, struct smb2fh *sfh, uint32_t lba,
     if (smb2 == NULL)
         return sdhds_write(sfh, lba, buf, 1) < 0 ? -1 : 0;
     uint64_t cur;
-    if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0)
+    if (smb2_lseek(smb2, sfh, lba * SECTOR_SIZE, SEEK_SET, &cur) < 0) {
+        smb_lost("hds lseek");
         return -1;
+    }
     int sz = smb2_write(smb2, sfh, buf, SECTOR_SIZE);
-    if (sz < 0)
+    if (sz < 0) {
+        smb_lost("hds write");
         return -1;
+    }
     return 0;
 }

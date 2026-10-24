@@ -26,6 +26,7 @@
 #ifndef _MAIN_H_
 #define _MAIN_H_
 
+#include <stdbool.h>
 #include "smb2.h"
 #include "libsmb2.h"
 #include "FreeRTOS.h"
@@ -47,6 +48,11 @@ void keepalive_task(void *params);
 
 void net_setup(void);
 void keepalive_poll(void);
+/* SMB の 1 回の要求を待つ上限 (秒)。Z の Linux は USB の 1 命令を 30 秒で諦めてリセットするので、USB タスクの中の SMB は
+   これで打ち切り、読み書きは NOT READY にして出し直させる (smb_lost で裏でつなぎ直す) */
+#define SMB_IO_TIMEOUT  5
+extern volatile bool smb_down;
+void smb_lost(const char *why);
 const char *net_hostname(void);
 struct smb2_context *connect_smb2(const char *share);
 void disconnect_smb2(struct smb2_context *smb2);

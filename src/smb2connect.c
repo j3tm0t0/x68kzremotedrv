@@ -24,6 +24,7 @@
  */
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,6 +33,7 @@
 #include "libsmb2.h"
 
 #include "config_file.h"
+#include "main.h"
 
 //****************************************************************************
 // Smb2 connection functions
@@ -60,6 +62,7 @@ struct smb2_context *connect_smb2(const char *share)
         return NULL;
     }
     printf("SMB2 connection established.\n");
+    smb2_set_timeout(smb2, SMB_IO_TIMEOUT);     /* 既定 (0) では答えが来るまで待ち続ける */
 
     return smb2;
 }
@@ -199,11 +202,16 @@ void keepalive_smb2_all(void)
 {
     struct smb2share **s = &smb2share;
     struct smb2_stat_64 st;
+    bool bad = false;
     printf("Keepalive:");
     while (*s != NULL) {
         int r = smb2_stat((*s)->smb2, "", &st);
         printf(" %s->%d", (*s)->share, r);
+        if (r < 0)
+            bad = true;
         s = &(*s)->next;
     }
     printf("\n");
+    if (bad)
+        smb_lost("keepalive");
 }

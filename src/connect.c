@@ -302,6 +302,10 @@ static int vd_mount(void)
    (Charlie が PZL で見つけた)。SD カードの HDS とユニットはそのまま。つなぎ直したら vd_mount で開き直す */
 static void vd_unmount_smb(void)
 {
+    /* 先に状態を下げる (下の disconnect_smb2_all は SMB が止まっていると数秒かかる。その間に sfh だけが NULL で
+       sysstatus が STAT_CONFIGURED のままだと、USB タスクが MEDIUM ERROR を返していた) */
+    if (sysstatus > STAT_WIFI_CONNECTED)
+        sysstatus = STAT_WIFI_CONNECTED;
     for (int i = 0; i < 8; i++)
         if (rootpath[i] != NULL && !sdhds_is(rootpath[i]))
             rootpath[i] = NULL;
@@ -390,18 +394,31 @@ void connect_task(void *params)
     NEXT_SET(UINT32_MAX);
 
     while (1) {
-        uint32_t nvalue;
+        uint32_t nvalue = 0;
+        int mode;
 
-        xTaskNotifyWait(1, 0, &nvalue, portMAX_DELAY);
-        if (!(nvalue & CONNECT_WAIT))
-            continue;
+        if (smb_down) {
+            /* smb_lost のあと: 通るまで 5 秒ごとにつなぎ直す (Wi-Fi が切れていれば Wi-Fi から) */
+            if (xTaskNotifyWait(1, 0, &nvalue, pdMS_TO_TICKS(5000)) != pdTRUE || !(nvalue & CONNECT_WAIT))
+                nvalue = CONNECT_WAIT | (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP ?
+                                         CONNECT_SMB2 : CONNECT_WIFI);
+        } else {
+            xTaskNotifyWait(1, 0, &nvalue, portMAX_DELAY);
+            if (!(nvalue & CONNECT_WAIT))
+                continue;
+        }
         xSemaphoreTake(remote_sem, portMAX_DELAY);
-        int mode = nvalue & CONNECT_MASK;
+        mode = nvalue & CONNECT_MASK;
         if (mode == CONNECT_WIFI || mode == CONNECT_SMB2)
             vd_unmount_smb();
         connection(mode);
         if ((mode == CONNECT_WIFI || mode == CONNECT_SMB2) && sysstatus >= STAT_SMB2_CONNECTED)
             vd_mount();
+        if (smb_down && sysstatus >= STAT_CONFIGURED) {
+            smb_down = false;
+            printf("SMB reconnected\n");
+            msclog_mark("smb reconnected");
+        }
         xSemaphoreGive(remote_sem);
     }
 }
@@ -416,9 +433,25 @@ void connect_task(void *params)
    keepalive は印を立てるだけにして、USB タスクが自分の番に keepalive_poll で行う */
 static volatile bool keepalive_due;
 
+/* SMB の接続が切れた (または SMB_IO_TIMEOUT 秒答えが無かった) ときに、USB タスクから呼ぶ。libsmb2 は打ち切った要求の
+   遅れた答えを受けると接続ごと使えなくなるので、その接続はもう使わない: smb_down を立てて、USB タスクの HDS の読み書きは
+   SMB に触らずに NOT READY を返す (virtual_disk.c)。つなぎ直しは接続タスクが vd_unmount_smb → 接続 → vd_mount で行い、
+   開けたら smb_down を下ろす */
+volatile bool smb_down;
+
+void smb_lost(const char *why)
+{
+    if (smb_down)
+        return;
+    smb_down = true;
+    printf("SMB lost (%s), reconnecting\n", why);
+    msclog_mark("smb lost (%s)", why);
+    xTaskNotify(connect_th, CONNECT_SMB2 | CONNECT_WAIT, eSetBits);
+}
+
 void keepalive_poll(void)
 {
-    if (!keepalive_due || sysstatus < STAT_SMB2_CONNECTED)
+    if (!keepalive_due || sysstatus < STAT_SMB2_CONNECTED || smb_down)
         return;
     if (xSemaphoreTake(remote_sem, 0) != pdTRUE)
         return;                         /* 接続タスクが繋ぎにいっている: 次の周で */

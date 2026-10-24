@@ -369,6 +369,26 @@ static int bw_hds0_read(void *ctx, uint32_t lba, uint8_t *buf)
 }
 #endif
 
+#if BOOTWAIT
+/* HDS の 1 セクタの読み書き。SMB の上の HDS は、接続が切れている間 (smb_down) と接続タスクがつなぎ直している間
+   (remote_sem) は SMB に触らずに NOT READY を返す (msc_disk.c が呼び直し、Z の Linux が出し直す)。SMB の要求が失敗
+   したとき (SMB_IO_TIMEOUT 秒の打ち切りを含む) も、hdscache.c が smb_lost を呼ぶので NOT READY。SD カードの HDS の
+   失敗は今までどおり MEDIUM ERROR */
+static int hds_io(int id, uint32_t lba, uint8_t *buf, bool write)
+{
+    struct smb2_context *smb2 = diskinfo[id].smb2;
+    int r;
+    if (smb2 != NULL && (smb_down || xSemaphoreTake(remote_sem, 0) != pdTRUE))
+        return VD_NOTREADY;
+    r = write ? hds_cache_write(smb2, diskinfo[id].sfh, lba, buf) : hds_cache_read(smb2, diskinfo[id].sfh, lba, buf);
+    if (smb2 != NULL)
+        xSemaphoreGive(remote_sem);
+    if (r < 0)
+        return smb2 != NULL && smb_down ? VD_NOTREADY : VD_IOERR;
+    return 0;
+}
+#endif
+
 int vd_read_block(uint32_t lba, uint8_t *buf)
 {
     memset(buf, 0, 512);
@@ -501,7 +521,7 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
                 return bw_disk_read(lba, buf);
             }
 #endif
-            return sysstatus >= STAT_CONFIGURED ? VD_IOERR : VD_NOTREADY;
+            return sysstatus >= STAT_CONFIGURED && !smb_down ? VD_IOERR : VD_NOTREADY;   /* smb_down: つなぎ直しの途中 */
         }
         if (diskinfo[id].type == DTYPE_REMOTEBOOT)
             vd_sync();
@@ -518,9 +538,13 @@ int vd_read_block(uint32_t lba, uint8_t *buf)
             if (lba == 0x20 || lba == 0x21) {
                 lba -= 0x20 - 2;
             }
+#if BOOTWAIT
+            return hds_io(id, lba, buf, false);
+#else
             if (hds_cache_read(diskinfo[id].smb2, diskinfo[id].sfh, lba, buf) < 0)
-                return BOOTWAIT ? VD_IOERR : -1;
+                return -1;
             return 0;
+#endif
         }
 
         if (diskinfo[id].type == DTYPE_REMOTEBOOT ||
@@ -693,7 +717,7 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
 
 #if BOOTWAIT
         if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh == NULL)
-            return sysstatus >= STAT_CONFIGURED ? VD_IOERR : VD_NOTREADY;
+            return sysstatus >= STAT_CONFIGURED && !smb_down ? VD_IOERR : VD_NOTREADY;   /* smb_down: つなぎ直しの途中 */
         if (diskinfo[id].type == DTYPE_REMOTECOMM && lba >= NETPIPE_WLBA && lba < NETPIPE_WLBA + 8)
             return netpipe_write(lba, buf);     /* netpipe は SMB の接続を待たない */
         if (diskinfo[id].type != DTYPE_REMOTECOMM)
@@ -703,9 +727,13 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
 #endif
 
         if (diskinfo[id].type == DTYPE_HDS && diskinfo[id].sfh != NULL) {
+#if BOOTWAIT
+            return hds_io(id, lba, buf, true);
+#else
             if (hds_cache_write(diskinfo[id].smb2, diskinfo[id].sfh, lba, buf) < 0)
-                return BOOTWAIT ? VD_IOERR : -1;
+                return -1;
             return 0;
+#endif
         }
         if (diskinfo[id].type == DTYPE_REMOTECOMM) {
             if (lba >= NETPIPE_WLBA && lba < NETPIPE_WLBA + 8) {
