@@ -143,6 +143,7 @@ static int32_t vd_result(char dir, uint8_t lun, uint32_t lba, int rc, uint32_t b
     defer_lba = 0xffffffff;
     msc_notready++;
     msclog_mark("notready %c 0x%lx -> 04/01", dir, (unsigned long)lba);
+    printf("msc: %c 0x%lx -> NOT READY 04/01\n", dir, (unsigned long)lba);
     set_sense(SCSI_SENSE_NOT_READY, 0x04, 0x01);
     return -1;
   }
@@ -153,6 +154,7 @@ static int32_t vd_result(char dir, uint8_t lun, uint32_t lba, int rc, uint32_t b
   if (rc == VD_IOERR) {
     msc_ioerr++;
     msclog_mark("ioerr %c 0x%lx -> 03/11", dir, (unsigned long)lba);
+    printf("msc: %c 0x%lx -> MEDIUM ERROR 03/11\n", dir, (unsigned long)lba);
     set_sense(SCSI_SENSE_MEDIUM_ERROR, 0x11, 0x00);   // UNRECOVERED READ ERROR
     return -1;
   }
@@ -174,6 +176,53 @@ int32_t tud_msc_request_sense_cb(uint8_t lun, void* buffer, uint16_t bufsize)
 }
 #endif
 
+// USB の側の止まりを調べる (Linux が 30 秒で USB をリセットする件、x68k-zos #38): コールバック 1 回が 1 秒を超えたとき、
+// 前のコールバックから 10 秒以上なにも来なかったときに UART に出す。SMB が答え終えていてもコマンドが終わらない
+// (ホストからの続きが来ない) のか、Pico がコールバックの中で止まっているのかを分ける
+static uint32_t cb_last_end;
+static char cb_last_dir;
+static uint32_t cb_last_lba;
+
+// 端点の STALL と、ホストからの CLEAR_FEATURE(ENDPOINT_HALT) を UART に出す (TinyUSB の関数をリンカの --wrap で包む。
+// CMakeLists.txt)。30 秒止まる件で、usbmon に OUT の EPIPE (-32) と clear-halt が見えたため
+void __real_usbd_edpt_stall(uint8_t rhport, uint8_t ep_addr);
+void __real_dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr);
+volatile uint32_t msc_stalls, msc_clear_halts;
+
+void __wrap_usbd_edpt_stall(uint8_t rhport, uint8_t ep_addr)
+{
+  msc_stalls++;
+  printf("usb: stall ep %02x (last %c 0x%lx)\n", ep_addr, cb_last_dir, (unsigned long)cb_last_lba);
+  __real_usbd_edpt_stall(rhport, ep_addr);
+}
+
+void __wrap_dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr)
+{
+  msc_clear_halts++;
+  printf("usb: clear-halt ep %02x (last %c 0x%lx)\n", ep_addr, cb_last_dir, (unsigned long)cb_last_lba);
+  __real_dcd_edpt_clear_stall(rhport, ep_addr);
+}
+
+static uint32_t cb_begin(char dir, uint32_t lba)
+{
+  uint32_t t = to_ms_since_boot(get_absolute_time());
+  if (cb_last_end != 0 && t - cb_last_end > 10000)
+    printf("msc: no callback for %lu ms before %c 0x%lx (last %c 0x%lx, stalls %lu, clear-halts %lu)\n",
+           (unsigned long)(t - cb_last_end), dir, (unsigned long)lba, cb_last_dir, (unsigned long)cb_last_lba,
+           (unsigned long)msc_stalls, (unsigned long)msc_clear_halts);
+  return t;
+}
+
+static void cb_end(char dir, uint32_t lba, uint32_t t0)
+{
+  uint32_t t = to_ms_since_boot(get_absolute_time());
+  if (t - t0 > 1000)
+    printf("msc: %c 0x%lx took %lu ms\n", dir, (unsigned long)lba, (unsigned long)(t - t0));
+  cb_last_end = t;
+  cb_last_dir = dir;
+  cb_last_lba = lba;
+}
+
 // Callback invoked when received READ10 command.
 // Copy disk's data to buffer (up to bufsize) and return number of copied bytes.
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void* buffer, uint32_t bufsize)
@@ -181,7 +230,9 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void* buff
   // out of ramdisk
   if ( lba >= DISK_BLOCK_NUM ) return -1;
 
+  uint32_t t0 = cb_begin('R', lba);
   int rc = vd_read_block(lba, buffer);
+  cb_end('R', lba, t0);
 #if BOOTWAIT
   if (rc == VD_NOTREADY && lba == defer_lba)
     return vd_result('R', lun, lba, rc, bufsize);     // 待っている間は数えない・記録しない
@@ -205,7 +256,9 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t* 
   // out of ramdisk
   if ( lba >= DISK_BLOCK_NUM ) return -1;
 
+  uint32_t t0 = cb_begin('W', lba);
   int rc = vd_write_block(lba, buffer);
+  cb_end('W', lba, t0);
 #if BOOTWAIT
   if (rc == VD_NOTREADY && lba == defer_lba)
     return vd_result('W', lun, lba, rc, bufsize);

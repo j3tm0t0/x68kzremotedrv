@@ -142,7 +142,9 @@ option(BOOTWAIT_SCREEN "Show a waiting message on the Z while the HDS isn't open
 if(BOOTWAIT AND BOOTWAIT_SCREEN)
     target_sources(${PROJECT_NAME} PRIVATE src/bootwait.c src/bootwait_pico.c)
     target_compile_definitions(${PROJECT_NAME} PRIVATE BOOTWAIT_SCREEN=1)
-    target_link_libraries(${PROJECT_NAME} pico_flash)
+    # USB の端点の STALL と clear-halt を記録する (src/msc_disk.c の __wrap_*)
+target_link_options(${PROJECT_NAME} PRIVATE -Wl,--wrap=usbd_edpt_stall -Wl,--wrap=dcd_edpt_clear_stall)
+target_link_libraries(${PROJECT_NAME} pico_flash)
 endif()
 
 # 起動時の調査用: Z からの MSC の命令を 1 件 1 行の UDP で MSC_LOG_HOST:6870 に送る (src/msclog.c)。-DMSC_LOG=ON で入れる
