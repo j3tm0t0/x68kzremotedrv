@@ -117,8 +117,11 @@ endif()
 # Pico の lwIP で行う (TCP / UDP / DNS)。-DTSP=OFF で外す。lwIP の大きさは src/tsp_lwip/lwipopts.h
 option(TSP "Socket service for tis.x -p (TSP 0xA6 records over netpipe)" ON)
 if(TSP)
-    target_sources(${PROJECT_NAME} PRIVATE src/tsp_svc.c)
+    target_sources(${PROJECT_NAME} PRIVATE src/tsp_svc.c src/tsp_mdns.c)
     target_include_directories(${PROJECT_NAME} BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/tsp_lwip)
+    # mDNS: ".local" の名前を引き (tsp_mdns.c)、<ホスト名>.local に答える (lwIP の mDNS、connect.c で始める)
+    target_link_libraries(${PROJECT_NAME} pico_lwip_mdns)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE TSP_MDNS=1)
     # Pico W (264KB) に合わせて表を小さく: Pico 側ソケット 20 (Z の 32 番号を全部同時には使わない)、送信の合計 4KB
     if(PICO_PLATFORM MATCHES "rp2350")
         # Pico 2 W (520KB): 本来の大きさ (x68k net/tistack/README.md「Pico の RAM」)

@@ -17,6 +17,11 @@
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 #include "lwip/dns.h"
+#if TSP_MDNS
+#include "tsp_mdns.h"                   /* ".local" は mDNS で引く (Pico のファーム) */
+#else
+#define tsp_gethostbyname dns_gethostbyname
+#endif
 #include "lwip/pbuf.h"
 #include "tsp.h"
 #include "tsp_svc.h"
@@ -391,7 +396,7 @@ static void c_connect(int slot, int gen, const uint8_t *b, unsigned n)
     name[nl] = 0;
     s->state = P_DNS;
     tsp_stat.dns++;
-    e = dns_gethostbyname(name, &ip, cb_dns_connect, (void *)(uintptr_t)((s - ps) | (s->serial << 8)));
+    e = tsp_gethostbyname(name, &ip, cb_dns_connect, (void *)(uintptr_t)((s - ps) | (s->serial << 8)));
     if (e == ERR_OK)
       start_connect(s, &ip);
     else if (e != ERR_INPROGRESS)
@@ -546,7 +551,7 @@ static void c_resolve(int k, const uint8_t *b, unsigned n)
   q[k].serial = ++qserial;
   q[k].state = 1;
   tsp_stat.dns++;
-  e = dns_gethostbyname(name, &ip, cb_dns_query, (void *)(uintptr_t)(k | (q[k].serial << 8)));
+  e = tsp_gethostbyname(name, &ip, cb_dns_query, (void *)(uintptr_t)(k | (q[k].serial << 8)));
   if (e == ERR_OK) {
     q[k].state = 2;
     q[k].code = TSP_OK;

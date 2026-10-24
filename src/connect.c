@@ -47,6 +47,10 @@
 #include "pico/aon_timer.h"
 #endif
 #include "pico/unique_id.h"
+#include "lwip/opt.h"
+#if LWIP_MDNS_RESPONDER
+#include "lwip/apps/mdns.h"
+#endif
 #include "lwip/dhcp.h"
 #include "lwip/dns.h"
 #include "virtual_disk.h"
@@ -107,6 +111,11 @@ void net_setup(void)
     ip4_addr_t ip, mask, gw, dns;
     cyw43_arch_lwip_begin();
     netif_set_hostname(n, hostname);
+#if LWIP_MDNS_RESPONDER
+    /* <ホスト名>.local に答える。netif が上がってから調べて名乗るのは lwIP がする (状態の通知) */
+    mdns_resp_init();
+    mdns_resp_add_netif(n, hostname);
+#endif
     if (config.ipaddr[0] != '\0' && ip4addr_aton(config.ipaddr, &ip)) {
         /* 固定 IP: DHCP を止めて番地を決める (つなぐ前なので DHCP はまだ何も送っていない) */
         if (config.netmask[0] == '\0' || !ip4addr_aton(config.netmask, &mask))
