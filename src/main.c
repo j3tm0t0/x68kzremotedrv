@@ -36,6 +36,7 @@
 #include "tusb.h"
 
 #include "main.h"
+#include "away.h"
 #include "vd_command.h"
 #include "virtual_disk.h"
 #include "config_file.h"
@@ -90,6 +91,7 @@ static void main_task(void *params)
     }
 
     cyw43_arch_enable_sta_mode();
+    away_check();                       /* 外出用の設定 (SD の away.txt) を使うか。net_setup (固定 IP / DHCP) の前 */
     net_setup();
 
     remote_sem = xSemaphoreCreateBinary();

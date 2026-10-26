@@ -40,6 +40,7 @@
 #include "hidkbd_cmd.h"
 #include "hidkbd.h"
 #include "sdhds.h"
+#include "away.h"
 
 #define HIDKBD_PORT     6869
 #define READY_TIMEOUT   1000            /* Z が HID を読みに来ないまま (ms) なら諦める */
@@ -168,7 +169,9 @@ static int status_line(char *s, int size)
         if (cyw43_wifi_get_rssi(&cyw43_state, &rssi) == 0)
             n += snprintf(s + n, size - n, " rssi=%ld", (long)rssi);
     }
-    n += snprintf(s + n, size - n, " smb=%s", smb_state());
+    n += snprintf(s + n, size - n, " smb=%s", away_nosmb ? "none" : smb_state());
+    if (away)
+        n += snprintf(s + n, size - n, " away=1");
     int id = atoi(config.remoteboot) ? 1 : 0;   /* connect.c の vd_mount と同じ数え方 */
     for (int i = 0; i < countof(config.hds); i++, id++)
         if (config.hds[i][0] != '\0' && n < size)

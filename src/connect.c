@@ -57,6 +57,7 @@
 #include "config_file.h"
 #include "msclog.h"
 #include "bootwait.h"
+#include "away.h"
 
 //****************************************************************************
 // Global variables
@@ -138,15 +139,16 @@ void net_setup(void)
 
 static void connection(int mode)
 {
+    static int attempt;
     switch (mode) {
     case CONNECT_WIFI:
         printf("Connecting to WiFi...\n");
 
         sysstatus = STAT_WIFI_CONNECTING;
 
-        if (strlen(config.wifi_ssid) == 0 ||
-            cyw43_arch_wifi_connect_timeout_ms(config.wifi_ssid, config.wifi_passwd,
-                                               CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+        if (strlen(away_wifi_ssid()) == 0 ||
+            cyw43_arch_wifi_connect_timeout_ms(away_wifi_ssid(), away_wifi_passwd(),
+                                               away_wifi_auth(attempt++), 30000)) {
             sysstatus = STAT_WIFI_DISCONNECTED;
             printf("Failed to connect.\n");
             msclog_mark("wifi failed");
@@ -162,7 +164,7 @@ static void connection(int mode)
 
         ip4_addr_t *address = &(cyw43_state.netif[0].ip_addr);
         printf("Connected to %s as %d.%d.%d.%d as host %s\n",
-               config.wifi_ssid,
+               away ? "(away Wi-Fi)" : config.wifi_ssid,
                ip4_addr1_16(address), ip4_addr2_16(address), ip4_addr3_16(address), ip4_addr4_16(address),
                cyw43_state.netif[0].hostname);
 
@@ -351,9 +353,37 @@ static void sd_fetch_once(void)
 // WiFi connection task
 //****************************************************************************
 
+/* 外出用の設定で SMB を使わないとき: HDS とリモートドライブは SD カードだけ (vd_init で用意してある)。
+   Wi-Fi は tis.x -p や x68key のためだけなので、remote_sem を持たずに、つながるまで (切れたらまた) 裏でつなぎにいく */
+static void connect_away(void)
+{
+    sysstatus = STAT_WIFI_DISCONNECTED;
+#if HID_KEYBOARD
+    connect_finished = true;
+#endif
+    xTaskNotify(main_th, 1, eSetBits);
+    NEXT_SET(UINT32_MAX);
+    while (1) {
+        if (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) != CYW43_LINK_UP) {
+            if (sysstatus >= STAT_WIFI_CONNECTED)
+                printf("away: Wi-Fi lost\n");
+            connection(CONNECT_WIFI);
+            if (sysstatus < STAT_WIFI_CONNECTED) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+        }
+        sysstatus = STAT_WIFI_CONNECTED;
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
 void connect_task(void *params)
 {
     /* Set up WiFi connection */
+
+    if (away_nosmb)
+        connect_away();
 
     xSemaphoreTake(remote_sem, portMAX_DELAY);
     /* 電源を入れた直後は Wi-Fi や SMB2 サーバへの接続が一度で通らないことがある。通らないまま

@@ -48,6 +48,7 @@
 #include "bootloader.inc"
 #include "hdsboot.inc"
 #include "sdhds.h"
+#include "away.h"
 #include "sdfs.h"
 #include "settingui.inc"
 
@@ -225,7 +226,7 @@ int vd_init(void)
     remoteboot = atoi(config.remoteboot);
     fastconnect = atoi(config.fastconnect);
 
-    if (strlen(config.wifi_ssid) == 0 || strlen(config.smb2_server) == 0) {
+    if (!away_nosmb && (strlen(config.wifi_ssid) == 0 || strlen(config.smb2_server) == 0)) {
         /* not configured */
         for (int i = 0; i < 6; i++) {
             diskinfo[i].type = DTYPE_REMOTEBOOT;
@@ -759,8 +760,8 @@ int vd_write_block(uint32_t lba, uint8_t *buf)
                 cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
                 if ((rsize = vd_command(vdbuf_write, vdbuf_read)) < 0) {
 #if BOOTWAIT
-                    if (sysstatus < STAT_CONFIGURED)
-                        rsize = -1;             /* リモートドライブ (B:) はまだ使えない */
+                    if (sysstatus < STAT_CONFIGURED && !away_nosmb)
+                        rsize = -1;             /* リモートドライブ (B:) はまだ使えない (SMB を使わない外出用の設定なら SD のユニットはすぐ使える) */
                     else
 #endif
                     rsize = remote_serv(vdbuf_write, vdbuf_read);

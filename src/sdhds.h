@@ -25,6 +25,8 @@ int64_t sdhds_fetch(struct smb2_context *smb2, const char *smbpath, const char *
 int64_t sdhds_open(const char *path, void **handle);
 int sdhds_read(void *handle, uint32_t lba, uint8_t *buf, int nsect);
 int sdhds_write(void *handle, uint32_t lba, const uint8_t *buf, int nsect);
+/* カードの小さなファイル (path は "/..."、"sd:" は付けない) を buf に読み、終わりに 0 を置く。読んだバイト数 / -1 (無い・カードが無い) */
+int sdc_read_file(const char *path, char *buf, int max);
 
 /* UDP 6869 の sdcopy <共有名/パス> <sd-path> (hidkbd.c から) */
 void sdcopy_init(void);

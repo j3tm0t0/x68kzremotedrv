@@ -151,6 +151,25 @@ int sdhds_write(void *handle, uint32_t lba, const uint8_t *buf, int nsect)
     return r;
 }
 
+int sdc_read_file(const char *path, char *buf, int max)
+{
+    FIL f;
+    UINT br;
+    int r = -1;
+    if (!sdc_mount())
+        return -1;
+    sdc_lock();
+    if (f_open(&f, path, FA_READ) == FR_OK) {
+        if (f_read(&f, buf, max - 1, &br) == FR_OK) {
+            buf[br] = '\0';
+            r = br;
+        }
+        f_close(&f);
+    }
+    sdc_unlock();
+    return r;
+}
+
 #else   /* !SD_CARD: SD カードの無いビルド。呼ぶ側を変えずに済むように何もしない版 */
 
 void sdc_init(void) {}
@@ -162,6 +181,7 @@ int64_t sdhds_open(const char *path, void **handle) { (void)path; (void)handle; 
 bool sdhds_in_use(const char *sdpath) { (void)sdpath; return false; }
 int sdhds_read(void *handle, uint32_t lba, uint8_t *buf, int nsect) { return -1; }
 int sdhds_write(void *handle, uint32_t lba, const uint8_t *buf, int nsect) { return -1; }
+int sdc_read_file(const char *path, char *buf, int max) { return -1; }
 #endif  /* SD_CARD */
 
 #if SD_CARD && !PICO_RP2040
