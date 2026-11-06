@@ -3,7 +3,7 @@
  *
  * 別の Pico W で動かしていた picokbd (x68k の harness/picokbd) をこのファームに取り込んだもの。
  * Raspberry Pi などの x68key (PICOKBD=この Pico の IP) から ESC で rcmd を止めたり、Ctrl+F11+Del でリセットしたりする。
- * コマンドは hidkbd_cmd.c。終わったら "ok" (解釈できなければ "err ...") を返す。実行中に来たものには "err busy"。
+ * コマンドは hidkbd_cmd.c、"mouse ..." は hidmouse_cmd.c (HID_MOUSE のとき、HID のインスタンス 1 のマウス)。終わったら "ok" (解釈できなければ "err ...") を返す。実行中に来たものには "err busy"。
  *
  * picokbd は押すたびに tud_task() を回しながら待っていたが、ここの USB タスクは Z の MSC (SCSI) も受け持つので
  * 待たない: lwIP スレッドの受信コールバックは 1 行を写すだけ、USB タスクは毎周 hidkbd_task() で
@@ -14,7 +14,7 @@
  * "status" だけはキーを押さず、専用の小さなタスクが 1 行で答える (キーの実行中でも、Z が USB を読みに来なくても):
  *   ok host=<ホスト名> stat=<sysstatus> wifi=up|connecting|down|failed ip=a.b.c.d rssi=-55 smb=mounted|connected|connecting|failed|waiting
  *      hds0=open|closed ... remote0=ok|none ... uptime=812s usb=mounted|unmounted reads=<セクタ> writes=<セクタ>
- *      npd=<netpipe の交換回数> accel=ready|busy|wait|off/<計算した数> hid=ok|busy|notready heap=<空き>
+ *      npd=<netpipe の交換回数> accel=ready|busy|wait|off/<計算した数> hid=ok|busy|notready [mouse=ok|notready] heap=<空き>
  * 状態は x68kzremotedrv の sysstatus (STAT_*) と diskinfo / rootpath をそのまま読む。
  */
 #include <stdio.h>
@@ -38,6 +38,7 @@
 #include "accel.h"
 #include "bootwait.h"
 #include "hidkbd_cmd.h"
+#include "hidmouse_cmd.h"
 #include "hidkbd.h"
 #include "sdhds.h"
 #include "away.h"
@@ -67,6 +68,12 @@ extern volatile uint32_t msc_notready, msc_ioerr;
 /* USB タスクだけが触る */
 static struct hidkbd_cmd cmd;
 static struct hidkbd_report rep;
+#if HID_MOUSE
+static struct hidmouse_cmd mcmd;
+static struct hidmouse_report mrep;
+static bool is_mouse;                   /* 実行中のコマンドは "mouse ..." */
+static void mouse_step(uint32_t now);
+#endif
 static bool running, have_rep;
 static uint32_t due, wait_from;
 
@@ -184,10 +191,16 @@ static int status_line(char *s, int size)
     const char *acc = accel_state(&done);
     extern char __HeapLimit;
     if (n < size)
-        n += snprintf(s + n, size - n, " uptime=%lus usb=%s reads=%lu writes=%lu npd=%lu accel=%s/%lu hid=%s heap=%d",
+        n += snprintf(s + n, size - n, " uptime=%lus usb=%s reads=%lu writes=%lu npd=%lu accel=%s/%lu hid=%s%s heap=%d",
                       (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000), tud_mounted() ? "mounted" : "unmounted",
                       (unsigned long)msc_reads, (unsigned long)msc_writes, (unsigned long)netpipe_xchg, acc, (unsigned long)done,
-                      pending ? "busy" : (tud_hid_ready() ? "ok" : "notready"), (int)(&__HeapLimit - (char *)sbrk(0)));
+                      pending ? "busy" : (tud_hid_ready() ? "ok" : "notready"),
+#if HID_MOUSE
+                      tud_hid_n_ready(HIDMOUSE_INST) ? " mouse=ok" : " mouse=notready",
+#else
+                      "",
+#endif
+                      (int)(&__HeapLimit - (char *)sbrk(0)));
 #if BOOTWAIT
     if (n < size)
         n += snprintf(s + n, size - n, " notready=%lu ioerr=%lu", (unsigned long)msc_notready, (unsigned long)msc_ioerr);
@@ -239,7 +252,12 @@ void hidkbd_task(void)
     uint32_t now = to_ms_since_boot(get_absolute_time());
     if (!running) {
         __dmb();
+#if HID_MOUSE
+        is_mouse = strncmp(line, "mouse", 5) == 0 && (line[5] == '\0' || line[5] == ' ');
+        const char *r = is_mouse ? hidmouse_parse(&mcmd, line) : hidkbd_parse(&cmd, line);
+#else
         const char *r = hidkbd_parse(&cmd, line);
+#endif
         if (r != NULL) {
             finish(r);
             return;
@@ -249,6 +267,12 @@ void hidkbd_task(void)
     }
     if ((int32_t)(now - due) < 0)
         return;
+#if HID_MOUSE
+    if (is_mouse) {
+        mouse_step(now);
+        return;
+    }
+#endif
     if (!have_rep) {
         if (!hidkbd_next(&cmd, &rep)) {
             finish("ok");
@@ -266,6 +290,35 @@ void hidkbd_task(void)
     have_rep = false;
     due = now + rep.ms;
 }
+
+#if HID_MOUSE
+/* "mouse ..." の次のレポートを送る (hidkbd_task から、時刻が来たとき) */
+static void mouse_step(uint32_t now)
+{
+    if (!have_rep) {
+        if (!hidmouse_next(&mcmd, &mrep)) {
+            finish("ok");
+            return;
+        }
+        have_rep = true;
+        wait_from = now;
+    }
+    if (!tud_hid_n_ready(HIDMOUSE_INST)) {
+        if (now - wait_from > READY_TIMEOUT)
+            finish("err usb");
+        return;
+    }
+    if (tud_hid_n_get_protocol(HIDMOUSE_INST) == HID_PROTOCOL_BOOT) {
+        /* boot protocol: ボタン・X・Y の 3 バイトだけ */
+        uint8_t b[3] = { mrep.buttons, (uint8_t)mrep.dx, (uint8_t)mrep.dy };
+        tud_hid_n_report(HIDMOUSE_INST, 0, b, sizeof b);
+    } else {
+        tud_hid_n_mouse_report(HIDMOUSE_INST, 0, mrep.buttons, mrep.dx, mrep.dy, mrep.wheel, 0);
+    }
+    have_rep = false;
+    due = now + mrep.ms;
+}
+#endif
 
 /* HID の必須コールバック (使わない。LED の状態などは捨てる) */
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen)

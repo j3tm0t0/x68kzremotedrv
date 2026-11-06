@@ -39,7 +39,11 @@
    区別は bcdDevice で付ける */
 #define USB_PID           (0x4000 | _PID_MAP(CDC, 0) | _PID_MAP(MSC, 1) | \
                            _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
+#if HID_MOUSE
+#define USB_BCDDEVICE     0x0102        /* キーボードとマウス */
+#else
 #define USB_BCDDEVICE     0x0101
+#endif
 #else
 #define USB_PID           (0x4000 | _PID_MAP(CDC, 0) | _PID_MAP(MSC, 1) | _PID_MAP(HID, 2) | \
                            _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
@@ -91,6 +95,9 @@ enum
 #if HID_KEYBOARD
   ITF_NUM_HID,
 #endif
+#if HID_MOUSE
+  ITF_NUM_HID_MOUSE,            // マウスはキーボードの後ろ (HID のインスタンス 1)
+#endif
   ITF_NUM_TOTAL
 };
 
@@ -98,8 +105,13 @@ enum
 #define EPNUM_MSC_IN      0x81
 
 #if HID_KEYBOARD
+#if HID_MOUSE
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN + 2 * TUD_HID_DESC_LEN)
+#else
 #define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_DESC_LEN)
+#endif
 #define EPNUM_HID         0x82
+#define EPNUM_HID_MOUSE   0x83
 
 //--------------------------------------------------------------------+
 // HID Report Descriptor (boot protocol keyboard)
@@ -110,15 +122,32 @@ uint8_t const desc_hid_keyboard_report[] =
   TUD_HID_REPORT_DESC_KEYBOARD()
 };
 
+#if HID_MOUSE
+// ボタン 5・X・Y・ホイール・横ホイール (5 バイト、報告 ID なし)。先頭 3 バイトは boot protocol のマウスと同じ並び
+uint8_t const desc_hid_mouse_report[] =
+{
+  TUD_HID_REPORT_DESC_MOUSE()
+};
+#endif
+
 // Invoked when received GET HID REPORT DESCRIPTOR
 uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
 {
+#if HID_MOUSE
+  if (instance == HIDMOUSE_INST)
+    return desc_hid_mouse_report;
+#endif
   (void) instance;
   return desc_hid_keyboard_report;
 }
 
 // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
+#if HID_MOUSE
+#define HID_DESC  , TUD_HID_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10) \
+                  , TUD_HID_DESCRIPTOR(ITF_NUM_HID_MOUSE, 0, HID_ITF_PROTOCOL_MOUSE, sizeof(desc_hid_mouse_report), EPNUM_HID_MOUSE, CFG_TUD_HID_EP_BUFSIZE, 10)
+#else
 #define HID_DESC  , TUD_HID_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10)
+#endif
 #else
 #define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN)
 #define HID_DESC

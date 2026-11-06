@@ -116,6 +116,12 @@ if(HID_KEYBOARD)
     )
     # UDP の口: DHCP, DNS, netpipe, hidkbd で既定の 4 を使い切るので余裕を持たせる
     target_compile_definitions(${PROJECT_NAME} PRIVATE HID_KEYBOARD=1 MEMP_NUM_UDP_PCB=6)
+    # USB マウス (HID のインスタンス 1、UDP 6869 の "mouse ..."、src/hidmouse_cmd.c)。-DHID_MOUSE=OFF で外す (キーボードだけの元の形)
+    option(HID_MOUSE "USB HID mouse (relative, remote over UDP 6869) next to the keyboard" ON)
+    if(HID_MOUSE)
+        target_sources(${PROJECT_NAME} PRIVATE src/hidmouse_cmd.c)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HID_MOUSE=1)
+    endif()
 endif()
 
 # tis.x -p (x68k リポジトリの net/tistack) のソケット窓口 (src/tsp_svc.c): netpipe の 0xA6 のレコードで Z のソケット操作を
