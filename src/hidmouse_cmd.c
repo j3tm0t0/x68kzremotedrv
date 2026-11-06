@@ -13,6 +13,7 @@
  *   mouse release                 ボタンを全部離す
  *   mouse step <1-127>            1 レポートで動かす最大 (既定 8)。以後のコマンドにも残る
  *   mouse rate <ms>               動かすレポートの間隔 (既定 10)。以後のコマンドにも残る
+ *   mouse tap <ms>                ボタンを押している時間と離している時間 (既定 100)。以後のコマンドにも残る
  * Z の画面で何ドット動くかは Z のマウスの扱いによる (実機で合わせる)。
  */
 #include <stdlib.h>
@@ -25,6 +26,7 @@ enum { V_MOVE = 1, V_DOWN, V_UP, V_CLICK, V_DRAG, V_WHEEL, V_HOME, V_RELEASE, V_
 
 static int step = HIDMOUSE_STEP;
 static int rate = HIDMOUSE_RATE_MS;
+static int tap = HIDMOUSE_TAP_MS;
 static int coarse = HIDMOUSE_COARSE, coarse_dots = HIDMOUSE_COARSE_DOTS;
 static uint8_t held;                    /* 押したままのボタン (down / up / drag で変わり、コマンドをまたいで残る) */
 
@@ -133,11 +135,14 @@ const char *hidmouse_parse(struct hidmouse_cmd *c, char *line)
     } else if (strcmp(v, "step") == 0 && n == 3 && number(w[2], 1, 127, &a)) {
         step = a;
         return "ok";
+    } else if (strcmp(v, "tap") == 0 && n == 3 && number(w[2], 1, 1000, &a)) {
+        tap = a;
+        return "ok";
     } else if (strcmp(v, "rate") == 0 && n == 3 && number(w[2], 1, 1000, &a)) {
         rate = a;
         return "ok";
     } else {
-        return "err mouse usage: move dx dy | by dx dy | to x y | down/up [b] | click [b] [n] | drag dx dy [b] | wheel n | home | release | step n | rate ms | cal d dots";
+        return "err mouse usage: move dx dy | by dx dy | to x y | down/up [b] | click [b] [n] | drag dx dy [b] | wheel n | home | release | step n | rate ms | tap ms | cal d dots";
     }
     return NULL;
 }
@@ -174,12 +179,12 @@ bool hidmouse_next(struct hidmouse_cmd *c, struct hidmouse_report *r)
         else
             held &= c->verb == V_UP ? ~c->btn : 0;
         r->buttons = held;
-        r->ms = HIDMOUSE_TAP_MS;
+        r->ms = tap;
         return true;
     case V_CLICK:
         if (c->count <= 0)
             return false;
-        r->ms = HIDMOUSE_TAP_MS;
+        r->ms = tap;
         if (c->phase == 0) {
             r->buttons = held | c->btn;
             c->phase = 1;
@@ -193,7 +198,7 @@ bool hidmouse_next(struct hidmouse_cmd *c, struct hidmouse_report *r)
         if (c->phase == 0) {
             held |= c->btn;
             r->buttons = held;
-            r->ms = HIDMOUSE_TAP_MS;
+            r->ms = tap;
             c->phase = 1;
             return true;
         }
@@ -206,7 +211,7 @@ bool hidmouse_next(struct hidmouse_cmd *c, struct hidmouse_report *r)
         if (c->phase == 2) {
             held &= ~c->btn;
             r->buttons = held;
-            r->ms = HIDMOUSE_TAP_MS;
+            r->ms = tap;
             c->phase = 3;
             return true;
         }

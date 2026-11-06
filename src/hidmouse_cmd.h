@@ -8,7 +8,8 @@
  *   r = hidmouse_parse(&c, line);   NULL なら実行する。NULL 以外はそのまま返事にする ("ok" は設定だけ、"err ...")
  *   while (hidmouse_next(&c, &rep)) rep を送り、rep.ms だけ待つ */
 
-#define HIDMOUSE_TAP_MS     40          /* ボタンを押してから離すまで / 離してから次まで */
+#define HIDMOUSE_TAP_MS     100         /* ボタンを押してから離すまで / 離してから次まで (mouse tap で変える)。Z は 50ms 刻みほどでしか
+                                           ボタンを見ず、40ms ではダブルクリックの 2 回目が落ちた */
 #define HIDMOUSE_STEP       8           /* 1 レポートで動かす最大 (mouse step で変え、以後も残る) */
 #define HIDMOUSE_RATE_MS    10          /* 動かすレポートの間隔 (mouse rate で変える。bInterval 10ms に合わせる) */
 #define HIDMOUSE_HOME       4096        /* mouse home: 左上へこれだけ動かす (画面の端で止まる) */
