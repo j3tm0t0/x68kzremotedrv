@@ -7,8 +7,12 @@
  *
  *   AWAY: auto | always | off      auto (既定): 家の SSID が見えないときだけ / always: いつも (試験用) / off: 使わない
  *   WIFI_SSID: / WIFI_PASSWORD:    外でつなぐ Wi-Fi (パスワードは 63 文字まで。フラッシュの欄は 15 文字なので別に持つ)
- *   ほかの項目 (HDS0:、IPADDR:、SMB2_SERVER: など): 書いた項目だけ上書き。空欄も空欄で上書きする
- *     (IPADDR: 空欄 = DHCP、SMB2_SERVER: 空欄 = SMB を使わない)
+ *   IPADDR: / NETMASK: / GATEWAY: / DNS:  外の Wi-Fi での固定 IP。書かなければ (空欄も) DHCP。家の設定 (フラッシュ) は上書きしない
+ *   ほかの項目 (HDS0:、SMB2_SERVER: など): 書いた項目だけ上書き。空欄も空欄で上書きする (SMB2_SERVER: 空欄 = SMB を使わない)
+ *
+ * IP の設定はつなぐ SSID で決める (away_ip_for)。家の SSID (起動時のフラッシュの WIFI_SSID) なら家の固定 IP、away.txt の SSID なら
+ * away.txt の IP (既定 DHCP)、それ以外 (設定画面で別の SSID を選んだ) は DHCP。家の固定 IP のまま設定画面でテザリングに
+ * つなぎ直し、192.168.1.4 のままになっていた。家か外かを起動時に決めるのは今までどおり (動作中に自動では切り替えない)。
  *
  * SSID とパスワードは表示しない (UART のログにも出さない)。
  */
@@ -26,8 +30,12 @@
 bool away;
 bool away_nosmb;
 
+static char home_ssid[sizeof config.wifi_ssid + 1];    /* 起動時のフラッシュの WIFI_SSID */
+static bool have_file;                  /* away.txt を読んだ (AWAY: off でない) */
+static bool user_wifi;                  /* 設定画面で Wi-Fi を選び直した: away.txt の SSID より設定画面のものを使う */
 static char wifi_ssid[33];
 static char wifi_passwd[64];
+static struct away_ip away_ip;          /* away.txt の IPADDR: など (空 = DHCP) */
 static char text[2048];
 static volatile bool home_seen;
 
@@ -89,6 +97,7 @@ void away_check(void)
 {
     char mode[16] = "auto";
 
+    memcpy(home_ssid, config.wifi_ssid, sizeof config.wifi_ssid);
     sdc_init();
     if (sdc_read_file(AWAY_FILE, text, sizeof text) < 0)
         return;
@@ -97,12 +106,18 @@ void away_check(void)
         printf("away: off\n");
         return;
     }
+    /* SSID とパスワードと IP は家にいても控える (設定画面で away.txt の SSID を選んだときに使う) */
+    have_file = true;
+    take("WIFI_SSID:", wifi_ssid, sizeof wifi_ssid);
+    take("WIFI_PASSWORD:", wifi_passwd, sizeof wifi_passwd);
+    take("IPADDR:", away_ip.ipaddr, sizeof away_ip.ipaddr);
+    take("NETMASK:", away_ip.netmask, sizeof away_ip.netmask);
+    take("GATEWAY:", away_ip.gateway, sizeof away_ip.gateway);
+    take("DNS:", away_ip.dns, sizeof away_ip.dns);
     if (strcasecmp(mode, "always") != 0 && home_visible()) {
         printf("away: home Wi-Fi seen, normal settings\n");
         return;
     }
-    take("WIFI_SSID:", wifi_ssid, sizeof wifi_ssid);
-    take("WIFI_PASSWORD:", wifi_passwd, sizeof wifi_passwd);
     /* "#" の行は空白にする (config_parse は行の途中の漢字で止まり、その後ろの「項目:」を拾うことがある) */
     for (char *p = text; *p != '\0'; ) {
         char *e = p + strcspn(p, "\r\n");
@@ -115,23 +130,56 @@ void away_check(void)
     away_nosmb = config.smb2_server[0] == '\0';
     printf("away: on (%s)%s%s, HDS0 %s, %s\n", mode,
            wifi_ssid[0] ? ", own Wi-Fi" : "", away_nosmb ? ", no SMB" : "",
-           config.hds[0], config.ipaddr[0] ? config.ipaddr : "DHCP");
+           config.hds[0], away_ip.ipaddr[0] ? away_ip.ipaddr : "DHCP");
+}
+
+void away_user_wifi(void)
+{
+    user_wifi = true;
+}
+
+/* ssid が away.txt の Wi-Fi か (away.txt に SSID が無ければ、外出中の家の SSID が外の Wi-Fi) */
+static bool is_away_ssid(const char *ssid)
+{
+    if (!have_file)
+        return false;
+    if (wifi_ssid[0])
+        return strcmp(ssid, wifi_ssid) == 0;
+    return away && strcmp(ssid, home_ssid) == 0;
 }
 
 const char *away_wifi_ssid(void)
 {
-    return away && wifi_ssid[0] ? wifi_ssid : config.wifi_ssid;
+    return away && wifi_ssid[0] && !user_wifi ? wifi_ssid : config.wifi_ssid;
 }
 
+/* away.txt の SSID なら away.txt のパスワード (63 文字まで。設定画面の欄は 15 文字) */
 const char *away_wifi_passwd(void)
 {
-    return away && wifi_ssid[0] ? wifi_passwd : config.wifi_passwd;
+    return wifi_ssid[0] && is_away_ssid(away_wifi_ssid()) ? wifi_passwd : config.wifi_passwd;
 }
 
 /* 家の Wi-Fi は今までどおり WPA2。外 (スマートフォン) は WPA3 だけのこともあるので、WPA2 と WPA2/WPA3 を交互に */
 uint32_t away_wifi_auth(int attempt)
 {
-    if (!(away && wifi_ssid[0]) || (attempt & 1) == 0)
+    if (strcmp(away_wifi_ssid(), home_ssid) == 0 || (attempt & 1) == 0)
         return CYW43_AUTH_WPA2_AES_PSK;
     return CYW43_AUTH_WPA3_WPA2_AES_PSK;
+}
+
+const struct away_ip *away_ip_for(const char *ssid)
+{
+    static struct away_ip ip;
+    if (is_away_ssid(ssid)) {
+        ip = away_ip;
+    } else if (strcmp(ssid, home_ssid) == 0) {
+        /* 家: フラッシュ (設定画面) の固定 IP */
+        snprintf(ip.ipaddr, sizeof ip.ipaddr, "%s", config.ipaddr);
+        snprintf(ip.netmask, sizeof ip.netmask, "%s", config.netmask);
+        snprintf(ip.gateway, sizeof ip.gateway, "%s", config.gateway);
+        snprintf(ip.dns, sizeof ip.dns, "%s", config.dns);
+    } else {
+        return NULL;
+    }
+    return ip.ipaddr[0] ? &ip : NULL;
 }

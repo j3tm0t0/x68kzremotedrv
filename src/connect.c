@@ -90,7 +90,7 @@ struct diskinfo diskinfo[7];
 // Private functions
 //****************************************************************************
 
-/* ホスト名 (DHCP で名乗る。どの基板も "PicoW" だったので見分けが付かなかった) と固定 IP。Wi-Fi につなぐ前に 1 回 */
+/* ホスト名 (DHCP で名乗る。どの基板も "PicoW" だったので見分けが付かなかった)。Wi-Fi につなぐ前に 1 回 */
 static char hostname[32];
 
 const char *net_hostname(void)
@@ -109,7 +109,6 @@ void net_setup(void)
                  id.id[PICO_UNIQUE_BOARD_ID_SIZE_BYTES - 2], id.id[PICO_UNIQUE_BOARD_ID_SIZE_BYTES - 1]);
     }
     struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
-    ip4_addr_t ip, mask, gw, dns;
     cyw43_arch_lwip_begin();
     netif_set_hostname(n, hostname);
 #if LWIP_MDNS_RESPONDER
@@ -117,21 +116,50 @@ void net_setup(void)
     mdns_resp_init();
     mdns_resp_add_netif(n, hostname);
 #endif
-    if (config.ipaddr[0] != '\0' && ip4addr_aton(config.ipaddr, &ip)) {
-        /* 固定 IP: DHCP を止めて番地を決める (つなぐ前なので DHCP はまだ何も送っていない) */
-        if (config.netmask[0] == '\0' || !ip4addr_aton(config.netmask, &mask))
+    cyw43_arch_lwip_end();
+}
+
+/* 固定 IP か DHCP か。つなぐ SSID で決める (away.c の away_ip_for: 家の SSID なら家の固定 IP、away.txt の SSID なら away.txt の IP、
+   ほかは DHCP)。Wi-Fi につなぐたびに呼び、変わるときだけ切り替える。起動時だけ決めていたので、設定画面でテザリングに
+   つなぎ直しても家の固定 IP (192.168.1.4) のままだった */
+static void net_apply_ip(const char *ssid)
+{
+    static char cur[sizeof(struct away_ip) + 4];    /* 今の設定 ("" = DHCP。cyw43 は初めに DHCP を始めている) */
+    const struct away_ip *c = away_ip_for(ssid);
+    char want[sizeof cur] = "";
+    if (c != NULL)
+        snprintf(want, sizeof want, "%s/%s/%s/%s", c->ipaddr, c->netmask, c->gateway, c->dns);
+    if (strcmp(want, cur) == 0)
+        return;
+    struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    ip4_addr_t ip, mask, gw, dns;
+    if (c != NULL && !ip4addr_aton(c->ipaddr, &ip)) {
+        printf("Bad IP address %s, using DHCP\n", c->ipaddr);
+        c = NULL;
+        want[0] = '\0';
+        if (cur[0] == '\0')
+            return;
+    }
+    strcpy(cur, want);
+    cyw43_arch_lwip_begin();
+    if (c != NULL) {
+        /* 固定 IP: DHCP を止めて番地を決める */
+        if (c->netmask[0] == '\0' || !ip4addr_aton(c->netmask, &mask))
             IP4_ADDR(&mask, 255, 255, 255, 0);
-        if (config.gateway[0] == '\0' || !ip4addr_aton(config.gateway, &gw))
+        if (c->gateway[0] == '\0' || !ip4addr_aton(c->gateway, &gw))
             ip4_addr_set_zero(&gw);
-        if (config.dns[0] == '\0' || !ip4addr_aton(config.dns, &dns))
+        if (c->dns[0] == '\0' || !ip4addr_aton(c->dns, &dns))
             dns = gw;
         dhcp_stop(n);
         netif_set_addr(n, &ip, &mask, &gw);
         ip_addr_t d;
         ip_addr_copy_from_ip4(d, dns);
         dns_setserver(0, &d);
-        printf("Static IP %s (hostname %s)\n", config.ipaddr, hostname);
+        printf("Static IP %s (hostname %s)\n", c->ipaddr, hostname);
     } else {
+        /* DHCP: 前の固定の番地を消してから始める (dhcp_start は番地を消さない)。DNS は DHCP の答えで決まる */
+        netif_set_addr(n, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4);
+        dhcp_start(n);
         printf("DHCP (hostname %s)\n", hostname);
     }
     cyw43_arch_lwip_end();
@@ -145,6 +173,7 @@ static void connection(int mode)
         printf("Connecting to WiFi...\n");
 
         sysstatus = STAT_WIFI_CONNECTING;
+        net_apply_ip(away_wifi_ssid());
 
         if (strlen(away_wifi_ssid()) == 0 ||
             cyw43_arch_wifi_connect_timeout_ms(away_wifi_ssid(), away_wifi_passwd(),
@@ -164,7 +193,7 @@ static void connection(int mode)
 
         ip4_addr_t *address = &(cyw43_state.netif[0].ip_addr);
         printf("Connected to %s as %d.%d.%d.%d as host %s\n",
-               away ? "(away Wi-Fi)" : config.wifi_ssid,
+               strcmp(away_wifi_ssid(), config.wifi_ssid) != 0 ? "(away Wi-Fi)" : config.wifi_ssid,
                ip4_addr1_16(address), ip4_addr2_16(address), ip4_addr3_16(address), ip4_addr4_16(address),
                cyw43_state.netif[0].hostname);
 
@@ -363,10 +392,12 @@ static void connect_away(void)
 #endif
     xTaskNotify(main_th, 1, eSetBits);
     NEXT_SET(UINT32_MAX);
+    bool again = false;
     while (1) {
-        if (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) != CYW43_LINK_UP) {
-            if (sysstatus >= STAT_WIFI_CONNECTED)
+        if (again || cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) != CYW43_LINK_UP) {
+            if (!again && sysstatus >= STAT_WIFI_CONNECTED)
                 printf("away: Wi-Fi lost\n");
+            again = false;
             connection(CONNECT_WIFI);
             if (sysstatus < STAT_WIFI_CONNECTED) {
                 vTaskDelay(pdMS_TO_TICKS(2000));
@@ -374,7 +405,13 @@ static void connect_away(void)
             }
         }
         sysstatus = STAT_WIFI_CONNECTED;
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        /* 設定画面で Wi-Fi を選び直したら (SETCONFIG の CONNECT_WIFI)、その SSID につなぎ直す */
+        uint32_t nvalue = 0;
+        if (xTaskNotifyWait(1, 0, &nvalue, pdMS_TO_TICKS(5000)) == pdTRUE && (nvalue & CONNECT_WAIT) &&
+            (nvalue & CONNECT_MASK) == CONNECT_WIFI) {
+            away_user_wifi();
+            again = true;
+        }
     }
 }
 
@@ -435,12 +472,15 @@ void connect_task(void *params)
     while (1) {
         uint32_t nvalue = 0;
         int mode;
+        bool user = true;               /* 設定画面から (SETCONFIG / FLASHCLEAR) */
 
         if (smb_down) {
             /* smb_lost のあと: 通るまで 5 秒ごとにつなぎ直す (Wi-Fi が切れていれば Wi-Fi から) */
-            if (xTaskNotifyWait(1, 0, &nvalue, pdMS_TO_TICKS(5000)) != pdTRUE || !(nvalue & CONNECT_WAIT))
+            if (xTaskNotifyWait(1, 0, &nvalue, pdMS_TO_TICKS(5000)) != pdTRUE || !(nvalue & CONNECT_WAIT)) {
                 nvalue = CONNECT_WAIT | (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP ?
                                          CONNECT_SMB2 : CONNECT_WIFI);
+                user = false;
+            }
         } else {
             xTaskNotifyWait(1, 0, &nvalue, portMAX_DELAY);
             if (!(nvalue & CONNECT_WAIT))
@@ -448,6 +488,8 @@ void connect_task(void *params)
         }
         xSemaphoreTake(remote_sem, portMAX_DELAY);
         mode = nvalue & CONNECT_MASK;
+        if (user && mode == CONNECT_WIFI)
+            away_user_wifi();           /* 外出中でも、設定画面で選んだ SSID につなぐ */
         if (mode == CONNECT_WIFI || mode == CONNECT_SMB2)
             vd_unmount_smb();
         connection(mode);
