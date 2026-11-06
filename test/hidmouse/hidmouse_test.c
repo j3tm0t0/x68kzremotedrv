@@ -47,6 +47,12 @@ static void run(const char *name, const char *line, const char *want, const stru
         printf("ok   %s -> %.40s\n", name, res);
         return;
     }
+    if (n < 0) {                        /* 数と終わりだけ見る (to: home 33 + 間 1 + 粗 1 + 細 1) */
+        int ok = got == 36 && r[33].ms == HIDMOUSE_SETTLE_MS && r[34].dy == 64 && r[35].dy == 1;
+        printf("%s %s (%d reports)\n", ok ? "ok  " : "FAIL", name, got);
+        fails += !ok;
+        return;
+    }
     int bad = got != n;
     for (int i = 0; i < got && i < n && !bad; i++)
         if (r[i].buttons != e[i].b || r[i].dx != e[i].dx || r[i].dy != e[i].dy || r[i].wheel != e[i].w || r[i].ms != e[i].ms) {
@@ -113,6 +119,13 @@ int main(void)
     run("rate back", "mouse rate 10", "ok", NULL, 0);
     sums("diagonal", "mouse move 1000 -333", 1000, -333, 8, 125);
     sums("home", "mouse home", -HIDMOUSE_HOME, -HIDMOUSE_HOME, 127, (HIDMOUSE_HOME + 126) / 127);
+    run("by", "mouse by 32 -2", NULL, (struct exp[]){ {0, 64, 0, 0, 80}, {0, 64, 0, 0, 80},
+        {0, 1, -1, 0, 50}, {0, 1, -1, 0, 50} }, 4);
+    run("to", "mouse to 0 16", NULL, NULL, -1);
+    run("to range", "mouse to -1 0", "err mouse usage", NULL, 0);
+    run("cal", "mouse cal 32 7", "ok", NULL, 0);
+    run("by cal", "mouse by -8 0", NULL, (struct exp[]){ {0, -32, 0, 0, 80}, {0, -1, 0, 0, 50} }, 2);
+    run("cal back", "mouse cal 64 15", "ok", NULL, 0);
     run("bad verb", "mouse jump", "err mouse usage", NULL, 0);
     run("bare", "mouse", "err mouse usage", NULL, 0);
     run("bad num", "mouse move 1 x", "err mouse usage", NULL, 0);
