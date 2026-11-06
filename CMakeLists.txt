@@ -32,6 +32,9 @@ if(PICO_PLATFORM MATCHES "rp2350")
 endif()
 
 add_definitions(-DPICO_PLATFORM=${PICO_PLATFORM})
+# malloc の錠は pico の mutex ではなくスケジューラの停止 (src/rtos_hooks.c の __malloc_lock)。pico の mutex のままだと、
+# heap_3 の pvPortMalloc (スケジューラを止めて malloc) がほかのタスクの持つ mutex を待ってリストを壊し、止まった (sdcopy)
+add_compile_definitions(PICO_USE_MALLOC_MUTEX=0)
 add_definitions(-DHAVE_CONFIG_H)
 
 # Build libsmb2 as a library
@@ -63,6 +66,7 @@ add_executable(
         src/netpipe.c
         src/sdhds.c
         src/away.c
+        src/rtos_hooks.c
         src/sdfs.c
         src/usb_descriptors.c
         x68kserremote/service/remoteserv.c

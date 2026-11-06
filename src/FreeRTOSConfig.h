@@ -75,7 +75,7 @@
 #define configAPPLICATION_ALLOCATED_HEAP        0
 
 /* Hook function related definitions. */
-#define configCHECK_FOR_STACK_OVERFLOW          0
+#define configCHECK_FOR_STACK_OVERFLOW          2   /* あふれたら rtos_hooks.c が UART に出して再起動 */
 #define configUSE_MALLOC_FAILED_HOOK            0
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
@@ -122,8 +122,9 @@
 #define configSUPPORT_PICO_TIME_INTEROP         1
 
 #include <assert.h>
-/* Define to trap errors during development. */
-#define configASSERT(x)                         assert(x)
+/* assert(x) では Release (-DNDEBUG) で消えていた。消えないように自前で: UART に出して再起動 (rtos_hooks.c) */
+void rtos_fatal(int what, const char *file, int line);
+#define configASSERT(x)                         do { if (!(x)) rtos_fatal(0, __FILE__, __LINE__); } while (0)
 
 /* Set the following definitions to 1 to include the API function, or zero
 to exclude the API function. */

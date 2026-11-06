@@ -37,6 +37,7 @@
 
 #include "main.h"
 #include "away.h"
+void rtos_fatal_report(void);           /* rtos_hooks.c */
 #include "vd_command.h"
 #include "virtual_disk.h"
 #include "config_file.h"
@@ -154,6 +155,7 @@ int main(void)
     board_init();
     stdio_init_all();
     log_out_init();
+    rtos_fatal_report();                /* 前の起動が configASSERT / スタックあふれ / HardFault で止まっていたら出す */
     config_read();
 
     printf("\nX68000Z Remote Drive Service (version %s)\n", GIT_REPO_VERSION);
